@@ -35,14 +35,14 @@ add_executable(hello hello_world.cu)
 
 # find clang-format & clang-tidy BIN, but still need to exec these bins in custom scripts
 # clang-format
-# find_program(CLANG_FORMAT_BIN
-#         NAMES clang-format clang-format-8
-#         HINTS ${BUSTUB_CLANG_SEARCH_PATH})
-# if ("${CLANG_FORMAT_BIN}" STREQUAL "CLANG_FORMAT_BIN-NOTFOUND")
-#     message(FATAL_ERROR "cannot find clang-format")
-# else()
-#     message(STATUS "found clang-format at ${CLANG_FORMAT_BIN}")
-# endif()
+find_program(CLANG_FORMAT_BIN
+        NAMES clang-format clang-format-8
+        HINTS ${BUSTUB_CLANG_SEARCH_PATH})
+if ("${CLANG_FORMAT_BIN}" STREQUAL "CLANG_FORMAT_BIN-NOTFOUND")
+    message(FATAL_ERROR "cannot find clang-format")
+else()
+    message(STATUS "found clang-format at ${CLANG_FORMAT_BIN}")
+endif()
 # find_program(CLANG_TIDY_BIN
 #         NAMES clang-tidy clang-tidy-8
 #         HINTS ${BUSTUB_CLANG_SEARCH_PATH})
@@ -71,29 +71,49 @@ add_executable(hello hello_world.cu)
 # # "make check-format"
 # ##########################################
 #
-# string(CONCAT FORMAT_DIRS
-#         "${CMAKE_CURRENT_SOURCE_DIR},"
-#         "${CMAKE_CURRENT_SOURCE_DIR}/my-impl,"
-#         )
-# # runs clang format and updates files in place.
-# set(BUILD_SUPPORT_DIR "${CMAKE_SOURCE_DIR}/build_support")
-# add_custom_target(format ${BUILD_SUPPORT_DIR}/run_clang_format.py
-#         ${CLANG_FORMAT_BIN}
-#         ${BUILD_SUPPORT_DIR}/clang_format_exclusions.txt
-#         --source_dirs
-#         ${FORMAT_DIRS}
-#         --fix
-#         --quiet
-#         )
-#
-# # runs clang format and exits with a non-zero exit code if any files need to be reformatted
-# add_custom_target(check-format ${BUILD_SUPPORT_DIR}/run_clang_format.py
-#         ${CLANG_FORMAT_BIN}
-#         ${BUILD_SUPPORT_DIR}/clang_format_exclusions.txt
-#         --source_dirs
-#         ${FORMAT_DIRS}
-#         --quiet
-#         )
+string(CONCAT FORMAT_DIRS
+        "${CMAKE_CURRENT_SOURCE_DIR},"
+        "${CMAKE_CURRENT_SOURCE_DIR}/examples,"
+        )
+# runs clang format and updates files in place.
+set(BUILD_SUPPORT_DIR "${CMAKE_SOURCE_DIR}/build_support")
+add_custom_target(format ${BUILD_SUPPORT_DIR}/run_clang_format.py
+        ${CLANG_FORMAT_BIN}
+        ${BUILD_SUPPORT_DIR}/clang_format_exclusions.txt
+        --source_dirs
+        ${FORMAT_DIRS}
+        --fix
+        --quiet
+        )
+
+# runs clang format and exits with a non-zero exit code if any files need to be reformatted
+add_custom_target(check-format ${BUILD_SUPPORT_DIR}/run_clang_format.py
+        ${CLANG_FORMAT_BIN}
+        ${BUILD_SUPPORT_DIR}/clang_format_exclusions.txt
+        --source_dirs
+        ${FORMAT_DIRS}
+        --quiet
+        )
+
+# see: https://cmake.org/cmake/help/latest/module/FindCUDAToolkit.html
+find_package(CUDAToolkit)
+
+# add all CUDA libs (seems deprecated)
+# set(DL_LIBS ${CMAKE_DL_LIBS})
+# list(APPEND DL_LIBS ${CUDA_CUDNN_LIBRARY})
+# list(APPEND DL_LIBS ${CUDA_CUBLAS_LIBRARY})
+# message(STATUS "[CUDA] libs=" ${CUDA_CUDNN_LIBRARY} ${CUDA_CUBLAS_LIBRARY})
+
+# include_directories(${CUDA_INCLUDE_DIRS})
+include_directories(${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+message(STATUS "[CUDA] include dir=" ${CMAKE_CUDA_TOOLKIT_INCLUDE_DIRECTORIES})
+
+add_executable(simpleTensorCoreGEMM examples/simpleTensorCoreGEMM.cu)
+target_link_libraries(simpleTensorCoreGEMM CUDA::cublas CUDA::curand)
+set_target_properties(simpleTensorCoreGEMM PROPERTIES RUNTIME_OUTPUT_DIRECTORY examples)
+
+
+
 #
 #
 # # implementation code
