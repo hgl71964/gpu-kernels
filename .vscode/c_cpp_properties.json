@@ -1,0 +1,24 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "browse": {
+                // "limitSymbolsToIncludedHeaders": true,
+                "path": [
+                    "${workspaceFolder}/examples/**",
+                    "/usr/local/cuda-12.2/include/**"
+                ]
+            },
+            "includePath": [
+                "${workspaceFolder}/examples/**",
+                "/usr/local/cuda-12.2/include/**"
+            ],
+            "defines": [],
+            "compilerPath": "/usr/bin/gcc",
+            "cStandard": "c17",
+            "cppStandard": "gnu++17",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ],
+    "version": 4
+}
