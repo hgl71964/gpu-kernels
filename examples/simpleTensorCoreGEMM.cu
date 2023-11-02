@@ -25,6 +25,7 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
+// See: https://developer.nvidia.com/blog/programming-tensor-cores-cuda-9/
 #include <cublas_v2.h>
 #include <curand.h>
 #include <stdio.h>
