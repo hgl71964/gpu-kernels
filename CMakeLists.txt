@@ -95,7 +95,7 @@ add_custom_target(check-format ${BUILD_SUPPORT_DIR}/run_clang_format.py
         --quiet
         )
 
-# see: https://cmake.org/cmake/help/latest/module/FindCUDAToolkit.html
+# CUDA libs: see: https://cmake.org/cmake/help/latest/module/FindCUDAToolkit.html
 find_package(CUDAToolkit)
 
 # add all CUDA libs (seems deprecated)

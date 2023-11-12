@@ -1,0 +1,32 @@
+
+
+.visible .entry _Z3addPiPb( 	    // name mangling
+  .param .u64 _Z3addPiPb_param_0,   // 第一个参数，指向int类型的指针
+  .param .u64 _Z3addPiPb_param_1    // 第二个参数，指向bool类型的指针
+)
+{
+  .reg .pred %p<2>;   // 声明两个谓词寄存器
+  .reg .b16 %rs<2>;   // 声明两个16位布尔寄存器
+  .reg .b32 %r<3>;    // 声明三个32位整数寄存器
+  .reg .b64 %rd<9>;   // 声明九个64位整数寄存器
+
+  ld.param.u64 %rd2, [_Z3addPiPb_param_0];   // 加载第一个参数的值到寄存器%rd2
+  ld.param.u64 %rd3, [_Z3addPiPb_param_1];   // 加载第二个参数的值到寄存器%rd3
+  cvta.to.global.u64 %rd4, %rd3;   // 将%rd3中的地址转换为全局内存地址，并存储到%rd4中
+  mov.u32 %r1, %tid.x;   // 存储tid
+  cvt.s64.s32 %rd1, %r1;   // 将%r1中的32位整数值转换为64位有符号整数，并存储到%rd1中
+  add.s64 %rd5, %rd4, %rd1;   // 将%rd4和%rd1中的64位整数值相加，并将结果存储到%rd5中
+  ld.global.u8 %rs1, [%rd5];   // 获取cond[tid]的值
+  setp.eq.s16 %p1, %rs1, 0;   // 将%rs1与0进行比较，如果相等则设置%p1为真
+  @%p1 bra $L__BB0_2;   // 如果%p1为真，则进行跳转（相当于直接结束）
+
+  cvta.to.global.u64 %rd6, %rd2;   // 将%rd2中的地址转换为全局内存地址，并存储到%rd6中
+  shl.b64 %rd7, %rd1, 2;   // 将%rd1左移2位(乘以4)，并将结果存储到%rd7中，因为int数组的stride是4byte
+  add.s64 %rd8, %rd6, %rd7;   // 拿到a[tid]的地址
+  mov.u32 %r2, 2;   // a[tid] = 2
+  st.global.u32 [%rd8], %r2;   // 将%r2的值存储到全局内存地址[%rd8]中
+
+$L__BB0_2:
+  ret;   // 返回
+
+}

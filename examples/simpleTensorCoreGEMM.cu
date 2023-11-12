@@ -226,6 +226,10 @@ int main(int argc, char* argv[])
     gridDim.x = (MATRIX_M + (WMMA_M * blockDim.x / 32 - 1)) / (WMMA_M * blockDim.x / 32);
     gridDim.y = (MATRIX_N + WMMA_N * blockDim.y - 1) / (WMMA_N * blockDim.y);
 
+    printf("gridDim %d, %d\n", gridDim.x, gridDim.y);  // 256, 256
+    printf("blockDim %d, %d\n", blockDim.x, blockDim.y);  // 128, 4
+
+
     printf("Running with wmma...\n");
     cudaErrCheck(cudaEventRecord(startWMMA));
     wmma_example<<<gridDim, blockDim>>>(a_fp16, b_fp16, c_wmma, MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta);
