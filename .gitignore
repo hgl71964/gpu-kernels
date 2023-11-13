@@ -2,4 +2,8 @@ venv/
 
 build/
 
+# dynamic lib or object
 a.out
+*.o
+*.a
+*.dylib
