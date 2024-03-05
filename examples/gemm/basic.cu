@@ -2,6 +2,9 @@
 #include "cuda_runtime.h"
 #include <cmath>
 
+#include <cstdlib>  // for rand
+#include <ctime> // for time()
+
 
 #define BLOCK_DIM 8
 
@@ -27,8 +30,6 @@ __global__ void tiled_mm(float* da, float* db, float* dc, int block_m, int block
 	int row = blockIdx.y * blockDim.y + threadIdx.y;
 	int col = blockIdx.x * blockDim.x + threadIdx.x;
 
-	 // __shared__ float tileA[block_m][block_k];
-	 // __shared__ float tileB[block_k][block_n];
 	 __shared__ float tileA[BLOCK_DIM][BLOCK_DIM];
 	 __shared__ float tileB[BLOCK_DIM][BLOCK_DIM];
 
@@ -41,11 +42,14 @@ __global__ void tiled_mm(float* da, float* db, float* dc, int block_m, int block
                 // fetch to shared memory
                 float a=0;
                 float b=0;
-                if (M*row+k < M*K) {
-                        a = da[row*M+k];
+
+                int y = row*M + k + tile_col;
+                int x = (k+tile_row)*N + col;
+                if (y < M*K) {
+                        a = da[y];
                 }
-                if (k*N + col < N*K) {
-                        b = db[k*N + col];
+                if (x < N*K) {
+                        b = db[x];
                 }
 
 		tileA[tile_row][tile_col] = a;
@@ -67,7 +71,14 @@ __global__ void tiled_mm(float* da, float* db, float* dc, int block_m, int block
         }
 }
 
-int main() {
+int main(int argc, char *argv[]) {
+	int arg = 0;
+	if (argc > 1) {
+		arg = std::atoi(argv[1]);
+	}
+
+        srand(time(0));
+
         int m = 1024;
         int n = 1024;
         int k = 1024;
@@ -76,6 +87,7 @@ int main() {
         float *ha = (float *)malloc(sizeof(float) * m * k);
         float *hb = (float *)malloc(sizeof(float)*n*k);
         float *hc = (float *)malloc(sizeof(float)*m*n);
+        float *ref_c = (float *)malloc(sizeof(float)*m*n);
 
         float *da;
         float *db;
@@ -84,20 +96,31 @@ int main() {
         cudaMalloc((void **)&da, sizeof(float)*m*k);
         cudaMalloc((void**)&dc, sizeof(float)*m*n);
 
-        // init and transfer memory
+        // init and transfer memory (assume row-major)
+	float min = 0.0f;
+	float max = 1.0f;
         for (int i = 0; i < m; ++i) {
                 for (int j = 0; j < k; ++j) {
-                        ha[i*m + j] = 1.0;
+                        ha[i*m + j] = min + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (max - min)));
                 }
         }
         for (int i = 0; i < n; ++i) {
                 for (int j = 0; j < k; ++j) {
-                        hb[i*n + j] = 2.0;
+                        hb[i*n + j] = min + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (max - min)));
                 }
         }
         for (int i = 0; i < m; ++i) {
                 for (int j = 0; j < n; ++j) {
                         hc[i*m + j] = 0.0;
+                }
+        }
+        for (int i = 0; i < m; ++i) {
+                for (int j = 0; j < n; ++j) {
+                        float c = 0;
+			for (int kk = 0; kk < k; ++kk) {
+                                c += ha[i*m+kk] * hb[kk*n+j];
+			}
+	                ref_c[i*m + j] = c;
                 }
         }
         cudaMemcpy(da, ha, sizeof(float)*m*k,cudaMemcpyHostToDevice);
@@ -118,19 +141,21 @@ int main() {
         // launch
         std::cout << "grid: " << grid_x << "; " << grid_y << std::endl;
         std::cout << "block: " << block_m << "; " << block_n << std::endl;
+        std::cout << "arg: " << arg <<  std::endl;
 
-        // native_mm<<<grid, block>>>(da, db, dc, block_m, block_n, block_k, m, n, k);
-        tiled_mm<<<grid, block>>>(da, db, dc, block_m, block_n, block_k, m, n, k);
+        if (arg == 0)
+                native_mm<<<grid, block>>>(da, db, dc, block_m, block_n, block_k, m, n, k);
+        else
+                tiled_mm<<<grid, block>>>(da, db, dc, block_m, block_n, block_k, m, n, k);
         cudaDeviceSynchronize();
 
         // test output
         cudaMemcpy(hc, dc, sizeof(float)*n*m,cudaMemcpyDeviceToHost);
         cudaDeviceSynchronize();
-        float ref = (1.0 * 2.0)*k;
         for (int i = 0; i < m; ++i) {
                 for (int j = 0; j < n; ++j) {
-			if (std::abs(hc[i*m + j] - ref) > 1e-4) {
-			    std::cout << i << "." << j << ": " << hc[i*m+j] << ";    ";
+			if (std::abs(hc[i*m + j] - ref_c[i*m+j]) > 1e-4) {
+			    std::cout << i << "." << j << ": " << hc[i*m+j] << " " << ref_c[i*m+j] << ";    ";
 			}
 
                 }
