@@ -30,6 +30,9 @@
 #include <curand.h>
 #include <stdio.h>
 
+
+// nvcc simpleTensorCoreGEMM.cu --gpu-architecture=compute_80 -lcublas -lcurand
+
 // Define some error checking macros.
 #define cudaErrCheck(stat)                         \
     {                                              \

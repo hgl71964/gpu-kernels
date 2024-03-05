@@ -10,6 +10,9 @@
 #include <cuda_runtime.h>
 #include <mma.h>
 
+// nvcc anotherGEMM.cu --gpu-architecture=sm_80
+// NOTE that arch must be specified; otherwise fail to use mma
+
 #define CHECK_CUDA_ERROR(val) check((val), #val, __FILE__, __LINE__)
 template <typename T>
 void check(T err, const char* const func, const char* const file,

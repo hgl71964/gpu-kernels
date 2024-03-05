@@ -6,6 +6,8 @@
 #include <ctime> // for time()
 
 
+// compile: nvcc basic.cu
+
 #define BLOCK_DIM 8
 
 
