@@ -73,6 +73,63 @@ __global__ void tiled_mm(float* da, float* db, float* dc, int block_m, int block
         }
 }
 
+
+__global__ void tiled_mm_double_buffer(float* da, float* db, float* dc, int block_m, int block_n, int block_k, int M, int N, int K) {
+        // FIXME!
+    int row = blockIdx.y * blockDim.y + threadIdx.y;
+    int col = blockIdx.x * blockDim.x + threadIdx.x;
+
+    __shared__ float tileA[2][BLOCK_DIM][BLOCK_DIM];
+    __shared__ float tileB[2][BLOCK_DIM][BLOCK_DIM];
+
+    int tile_row = threadIdx.y;
+    int tile_col = threadIdx.x;
+
+    float res = 0; // thread local
+
+    int n = K / block_k; // Assuming K is perfectly divisible by block_k for simplicity
+    for (int m = 0; m < n; m++) {
+        int k = m * block_k;
+        int buff_idx = m % 2; // Determine current buffer index (0 or 1)
+
+        // Calculate global indices to load into shared memory
+        int y = row * M + k + tile_col;
+        int x = (k + tile_row) * N + col;
+
+        if (y < M * K) {
+            tileA[buff_idx][tile_row][tile_col] = da[y];
+        }
+        if (x < N * K) {
+            tileB[buff_idx][tile_row][tile_col] = db[x];
+        }
+
+        __syncthreads(); // Make sure all data is loaded into shared memory
+
+        // Use the other buffer for computation to overlap loading and computation
+        int compute_idx = (m - 1) % 2;
+        if (m > 0) { // Ensure we don't compute in the first iteration
+            for (int kk = 0; kk < block_k; ++kk) {
+                float a = tileA[compute_idx][tile_row][kk];
+                float b = tileB[compute_idx][kk][tile_col];
+                res += a * b;
+            }
+        }
+        __syncthreads(); // Ensure computation is done before next load
+    }
+
+    // Perform computation for the last set of tiles
+    for (int kk = 0; kk < block_k; ++kk) {
+        float a = tileA[n % 2][tile_row][kk];
+        float b = tileB[n % 2][kk][tile_col];
+        res += a * b;
+    }
+
+    if (row < M && col < N) {
+        dc[row * M + col] = res;
+    }
+}
+
+
 int main(int argc, char *argv[]) {
 	int arg = 0;
 	if (argc > 1) {
@@ -147,8 +204,10 @@ int main(int argc, char *argv[]) {
 
         if (arg == 0)
                 native_mm<<<grid, block>>>(da, db, dc, block_m, block_n, block_k, m, n, k);
-        else
+        else if (arg == 1)
                 tiled_mm<<<grid, block>>>(da, db, dc, block_m, block_n, block_k, m, n, k);
+        else if (arg == 2)
+                tiled_mm_double_buffer<<<grid, block>>>(da, db, dc, block_m, block_n, block_k, m, n, k);
         cudaDeviceSynchronize();
 
         // test output

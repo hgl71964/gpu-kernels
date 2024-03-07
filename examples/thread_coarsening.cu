@@ -28,7 +28,7 @@ int main() {
 
     float *h_A, *h_B, *h_C; // Host vectors
     float *d_A, *d_B, *d_C; // Device vectors
-    float *h_ref, *ref; 
+    float *h_ref, *ref;
 
     // Allocate memory on host
     h_A = (float *)malloc(size);
@@ -54,20 +54,25 @@ int main() {
     cudaMemcpy(d_B, h_B, size, cudaMemcpyHostToDevice);
 
     // coarsened version
-    int threadsPerBlock = 256;
-    int blocksPerGrid = (N + coarseningFactor * threadsPerBlock - 1) / (coarseningFactor * threadsPerBlock);
-    printf("N: %d, coarseningFactor: %d\n", N, coarseningFactor);
-    printf("grid: %d, block: %d\n", blocksPerGrid, threadsPerBlock);
-    vectorAddCoarsened<<<blocksPerGrid, threadsPerBlock>>>(d_A, d_B, d_C, N, coarseningFactor);
-    cudaDeviceSynchronize();
+    {
+            dim3 block(256);
+            dim3 grid(0);
+            grid.x = (N + coarseningFactor * block.x - 1) / (coarseningFactor * block.x);
+            printf("N: %d, coarseningFactor: %d\n", N, coarseningFactor);
+            printf("grid: %d, block: %d\n", grid.x, block.x);
+            vectorAddCoarsened<<<grid, block>>>(d_A, d_B, d_C, N, coarseningFactor);
+            cudaDeviceSynchronize();
+    }
 
     // non-coarsened version
-    dim3 block(256);
-    dim3 grid(0);
-    grid.x = (N + block.x - 1) / block.x;
-    printf("grid: %d, block: %d\n", grid.x, block.x);
-    vectorAdd<<<grid, block>>>(d_A, d_B, ref, N);
-    cudaDeviceSynchronize();
+    {
+            dim3 block(256);
+            dim3 grid(0);
+            grid.x = (N + block.x - 1) / block.x;
+            printf("grid: %d, block: %d\n", grid.x, block.x);
+            vectorAdd<<<grid, block>>>(d_A, d_B, ref, N);
+            cudaDeviceSynchronize();
+    }
 
     // Copy result back to host
     cudaMemcpy(h_C, d_C, size, cudaMemcpyDeviceToHost);
