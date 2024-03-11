@@ -11,32 +11,39 @@
 #define BLOCK_DIM 8
 
 
+#define cudaAssert(condition) \
+	if (!(condition)){ printf("Assertion %s failed!\n", #condition); asm("trap;"); }
+
+
 int cdiv(int length, int block_size) {
         return (length + block_size - 1)/block_size;
 }
 
 __global__ void native_mm(float* da, float* db, float* dc, int block_m, int block_n, int block_k, int M, int N, int K) {
-	int row = blockIdx.y * blockDim.y + threadIdx.y;
-	int col = blockIdx.x * blockDim.x + threadIdx.x;
+	int row = blockIdx.x * blockDim.x + threadIdx.x;
+	int col = blockIdx.y * blockDim.y + threadIdx.y;
 
         if (row < M && col < N) {
+                float res = 0;
                 for (int k = 0; k < K; ++k) {
-                        float a = da[row*M + k];
+                        float a = da[row*K + k];
                         float b = db[k*N + col];
-                        dc[row*M + col] += a*b;
+                        res += a*b;
                 }
+                dc[row*N + col] = res;
         }
 }
 
 __global__ void tiled_mm(float* da, float* db, float* dc, int block_m, int block_n, int block_k, int M, int N, int K) {
-	int row = blockIdx.y * blockDim.y + threadIdx.y;
-	int col = blockIdx.x * blockDim.x + threadIdx.x;
+	int row = blockIdx.x * blockDim.x + threadIdx.x;
+	int col = blockIdx.y * blockDim.y + threadIdx.y;
 
+         // must match block_m, block_n, block_k
 	 __shared__ float tileA[BLOCK_DIM][BLOCK_DIM];
 	 __shared__ float tileB[BLOCK_DIM][BLOCK_DIM];
 
-         int tile_row = threadIdx.y;
-         int tile_col = threadIdx.x;
+         int tile_row = threadIdx.x;
+         int tile_col = threadIdx.y;
 
          float res = 0; // thread local
 
@@ -45,13 +52,13 @@ __global__ void tiled_mm(float* da, float* db, float* dc, int block_m, int block
                 float a=0;
                 float b=0;
 
-                int y = row*M + k + tile_col;
-                int x = (k+tile_row)*N + col;
-                if (y < M*K) {
-                        a = da[y];
+                int x = row*K + (k + tile_col);
+                int y = (k + tile_row)*N + col;
+                if (x < M*K) {
+                        a = da[x];
                 }
-                if (x < N*K) {
-                        b = db[x];
+                if (y < N*K) {
+                        b = db[y];
                 }
 
 		tileA[tile_row][tile_col] = a;
@@ -69,65 +76,78 @@ __global__ void tiled_mm(float* da, float* db, float* dc, int block_m, int block
         }
 
         if (row < M && col < N) {
-                dc[row*M + col] = res;
+                dc[row*N + col] = res;
         }
 }
 
 
 __global__ void tiled_mm_double_buffer(float* da, float* db, float* dc, int block_m, int block_n, int block_k, int M, int N, int K) {
-        // FIXME!
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
+	int row = blockIdx.x * blockDim.x + threadIdx.x;
+	int col = blockIdx.y * blockDim.y + threadIdx.y;
 
-    __shared__ float tileA[2][BLOCK_DIM][BLOCK_DIM];
-    __shared__ float tileB[2][BLOCK_DIM][BLOCK_DIM];
+	// Double buffering: two sets of tiles for A and B
+	__shared__ float tileA[2][BLOCK_DIM][BLOCK_DIM];
+	__shared__ float tileB[2][BLOCK_DIM][BLOCK_DIM];
 
-    int tile_row = threadIdx.y;
-    int tile_col = threadIdx.x;
+	int tile_row = threadIdx.x;
+	int tile_col = threadIdx.y;
 
-    float res = 0; // thread local
+	float res = 0;
 
-    int n = K / block_k; // Assuming K is perfectly divisible by block_k for simplicity
-    for (int m = 0; m < n; m++) {
-        int k = m * block_k;
-        int buff_idx = m % 2; // Determine current buffer index (0 or 1)
+	int n_iter = K / block_k; // Assuming K is divisible by block_k for simplicity
+	cudaAssert(n_iter%2==0);
+	for (int t = 0; t < n_iter; t++) {
+	    int k = t * block_k;
+	    int buff_idx = t % 2; // Current buffer index
+	    int next_buff_idx = (t + 1) % 2; // Next buffer index
 
-        // Calculate global indices to load into shared memory
-        int y = row * M + k + tile_col;
-        int x = (k + tile_row) * N + col;
+	    // Load current tile
+	    int x = row * K + (k + tile_col);
+	    int y = (k + tile_row) * N + col;
+	    if (x < M * K) {
+		tileA[buff_idx][tile_row][tile_col] = da[x];
+	    } else {
+		tileA[buff_idx][tile_row][tile_col] = 0;
+	    }
+	    if (y < N * K) {
+		tileB[buff_idx][tile_row][tile_col] = db[y];
+	    } else {
+		tileB[buff_idx][tile_row][tile_col] = 0;
+	    }
 
-        if (y < M * K) {
-            tileA[buff_idx][tile_row][tile_col] = da[y];
-        }
-        if (x < N * K) {
-            tileB[buff_idx][tile_row][tile_col] = db[x];
-        }
+	    // Load next tile in advance if within bounds
+	    if (t < n_iter - 1) {
+		x = row * K + ((t + 1) * block_k + tile_col);
+		y = ((t + 1) * block_k + tile_row) * N + col;
+		if (x < M * K) {
+		    tileA[next_buff_idx][tile_row][tile_col] = da[x];
+		} else {
+		    tileA[next_buff_idx][tile_row][tile_col] = 0;
+		}
+		if (y < N * K) {
+		    tileB[next_buff_idx][tile_row][tile_col] = db[y];
+		} else {
+		    tileB[next_buff_idx][tile_row][tile_col] = 0;
+		}
+	    }
 
-        __syncthreads(); // Make sure all data is loaded into shared memory
+	    __syncthreads();
 
-        // Use the other buffer for computation to overlap loading and computation
-        int compute_idx = (m - 1) % 2;
-        if (m > 0) { // Ensure we don't compute in the first iteration
-            for (int kk = 0; kk < block_k; ++kk) {
-                float a = tileA[compute_idx][tile_row][kk];
-                float b = tileB[compute_idx][kk][tile_col];
-                res += a * b;
-            }
-        }
-        __syncthreads(); // Ensure computation is done before next load
-    }
+	    // Compute using current tile
+	    for (int kk = 0; kk < block_k; ++kk) {
+		float a = tileA[buff_idx][tile_row][kk];
+		float b = tileB[buff_idx][kk][tile_col];
+		res += a * b;
+	    }
 
-    // Perform computation for the last set of tiles
-    for (int kk = 0; kk < block_k; ++kk) {
-        float a = tileA[n % 2][tile_row][kk];
-        float b = tileB[n % 2][kk][tile_col];
-        res += a * b;
-    }
+	    __syncthreads();
+	}
 
-    if (row < M && col < N) {
-        dc[row * M + col] = res;
-    }
+	if (row < M && col < N) {
+	    dc[row * N + col] = res;
+	}
 }
+
 
 
 int main(int argc, char *argv[]) {
@@ -139,11 +159,11 @@ int main(int argc, char *argv[]) {
         srand(time(0));
 
         int m = 1024;
-        int n = 1024;
-        int k = 1024;
+        int n = 512;
+        int k = 128;
 
         // allocate input/output buffer
-        float *ha = (float *)malloc(sizeof(float) * m * k);
+        float *ha = (float *)malloc(sizeof(float)*m*k);
         float *hb = (float *)malloc(sizeof(float)*n*k);
         float *hc = (float *)malloc(sizeof(float)*m*n);
         float *ref_c = (float *)malloc(sizeof(float)*m*n);
@@ -160,26 +180,26 @@ int main(int argc, char *argv[]) {
 	float max = 1.0f;
         for (int i = 0; i < m; ++i) {
                 for (int j = 0; j < k; ++j) {
-                        ha[i*m + j] = min + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (max - min)));
+                        ha[i*k + j] = min + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (max - min)));
                 }
         }
-        for (int i = 0; i < n; ++i) {
-                for (int j = 0; j < k; ++j) {
+        for (int i = 0; i < k; ++i) {
+                for (int j = 0; j < n; ++j) {
                         hb[i*n + j] = min + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (max - min)));
                 }
         }
         for (int i = 0; i < m; ++i) {
                 for (int j = 0; j < n; ++j) {
-                        hc[i*m + j] = 0.0;
+                        hc[i*n + j] = 0.0;
                 }
         }
         for (int i = 0; i < m; ++i) {
                 for (int j = 0; j < n; ++j) {
                         float c = 0;
 			for (int kk = 0; kk < k; ++kk) {
-                                c += ha[i*m+kk] * hb[kk*n+j];
+                                c += ha[i*k+kk] * hb[kk*n+j];
 			}
-	                ref_c[i*m + j] = c;
+	                ref_c[i*n + j] = c;
                 }
         }
         cudaMemcpy(da, ha, sizeof(float)*m*k,cudaMemcpyHostToDevice);
@@ -198,6 +218,7 @@ int main(int argc, char *argv[]) {
         dim3 block(block_m, block_n, 1);
 
         // launch
+        std::cout << "GEMM: " << m << "; " << n << "; " << k << std::endl;
         std::cout << "grid: " << grid_x << "; " << grid_y << std::endl;
         std::cout << "block: " << block_m << "; " << block_n << std::endl;
         std::cout << "arg: " << arg <<  std::endl;
@@ -213,13 +234,18 @@ int main(int argc, char *argv[]) {
         // test output
         cudaMemcpy(hc, dc, sizeof(float)*n*m,cudaMemcpyDeviceToHost);
         cudaDeviceSynchronize();
+
+        int err=0;
         for (int i = 0; i < m; ++i) {
                 for (int j = 0; j < n; ++j) {
-			if (std::abs(hc[i*m + j] - ref_c[i*m+j]) > 1e-4) {
-			    std::cout << i << "." << j << ": " << hc[i*m+j] << " " << ref_c[i*m+j] << ";    ";
+			if (std::abs(hc[i*n+j] - ref_c[i*n+j]) > 1e-4) {
+			    std::cout << i << "." << j << ": " << hc[i*n+j] << " " << ref_c[i*n+j] << std::endl;
+                            err++;
 			}
-
+                        if (err > 10)
+                                break;
                 }
+                if (err > 10)
+                        break;
         }
-        std::cout << std::endl;
 }
