@@ -6,6 +6,16 @@
 
 using namespace std;
 
+#define CHECK_CUDA(func, ...)                                                               \
+  {                                                                                         \
+    cudaError_t e = (func);                                                                 \
+    if (e != cudaSuccess) {                                                                 \
+      std::cerr << "CUDA Error: " << cudaGetErrorString(e) << " (" << e << ") " << __FILE__ \
+                << ": line " << __LINE__ << " at function " << func << std::endl;           \
+      return e;                                                                             \
+    }                                                                                       \
+  }
+
 __global__ void hello()
 {
     // __shared__ char smem;
@@ -34,6 +44,10 @@ int main()
     int dev_id = 0;
 
     constexpr uint32_t num_threads = num_warps * warp_size;
+
+    int max_smem_per_sm = 0;
+    CHECK_CUDA(cudaDeviceGetAttribute(&max_smem_per_sm, cudaDevAttrMaxSharedMemoryPerMultiprocessor, dev_id));
+    cout << "max_smem_per_sm: " << max_smem_per_sm << endl;
 
     cudaFuncSetAttribute(kernel, cudaFuncAttributeMaxDynamicSharedMemorySize, smem_size);
 
