@@ -3,6 +3,8 @@
 #include <cstdlib>
 #include <ctime>
 
+// compile to shared lib: nvcc --ptxas-options=-v --compiler-options '-fPIC' -o mylib.so --shared mykernel.cu
+// then dump sass: cuobjdump -sass mylib.so > tmp
 // observe how the compiler generate different instructions
 
 #define MAX_BLOCKS 16
