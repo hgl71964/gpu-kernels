@@ -16,6 +16,13 @@ using namespace std;
     }                                                                                       \
   }
 
+
+template <typename T1, typename T2>
+__forceinline__ __device__ __host__ T1 ceil_div(const T1 x, const T2 y) {
+  return (x + y - 1) / y;
+}
+
+
 __global__ void hello()
 {
     // __shared__ char smem;
