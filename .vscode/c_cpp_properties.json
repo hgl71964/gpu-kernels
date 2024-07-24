@@ -6,11 +6,13 @@
                 // "limitSymbolsToIncludedHeaders": true,
                 "path": [
                     "${workspaceFolder}/examples/**",
+                    "/usr/local/cuda-12.1/include/**",
                     "/usr/local/cuda-12.2/include/**"
                 ]
             },
             "includePath": [
                 "${workspaceFolder}/examples/**",
+                "/usr/local/cuda-12.1/include/**",
                 "/usr/local/cuda-12.2/include/**"
             ],
             "defines": [],

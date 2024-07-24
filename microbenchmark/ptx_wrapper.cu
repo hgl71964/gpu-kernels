@@ -1,0 +1,160 @@
+#include <iostream>
+#include <fstream>
+#include <cuda_runtime.h>
+
+#include <cuda.h>
+
+// compile: nvcc ptx_wrapper.cu  -lcuda -lcudart
+
+// Function to read the contents of a file into a string
+std::string read_ptx(const char* filename) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Could not open file: " << filename << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    std::string content((std::istreambuf_iterator<char>(file)),
+                         std::istreambuf_iterator<char>());
+    file.close();
+    return content;
+}
+
+// std::string rf(const char* filename) {
+//     // Step 2: Load PTX from file
+//     std::ifstream ptxFile(filename, std::ios::in);
+//     if (!ptxFile) {
+//         std::cerr << "Error opening PTX file." << std::endl;
+//         exit(EXIT_FAILURE);
+//     }
+//     std::string ptx((std::istreambuf_iterator<char>(ptxFile)), std::istreambuf_iterator<char>());
+//     ptxFile.close();
+//     return ptx;
+// }
+
+size_t read_cubin(const char *filename, unsigned char **buffer) {
+    std::ifstream file(filename, std::ios::binary);
+    if (!file.is_open()) {
+        std::cerr << "Failed to open file: " << filename << std::endl;
+        return 0;
+    }
+
+    file.seekg(0, std::ios::end);
+    size_t fileSize = file.tellg();
+    file.seekg(0, std::ios::beg);
+
+    *buffer = new unsigned char[fileSize];
+    file.read((char *)*buffer, fileSize);
+    file.close();
+
+    return fileSize;
+}
+
+
+int main() {
+    const char* kernel_name = "_Z3addPiS_S_Px";
+    const char* filename = "1.ptx";
+    CUresult result;
+    CUfunction fun;
+    CUmodule mod;
+
+    // device and context
+    result = cuInit(0);
+    if (result != CUDA_SUCCESS) {
+        std::cerr << "Failed to initialize CUDA." << std::endl;
+    }
+    CUdevice device;
+    result = cuDeviceGet(&device, 0);
+    if (result != CUDA_SUCCESS) {
+        std::cerr << "Failed to get device." << std::endl;
+        exit(EXIT_FAILURE);
+    }
+    CUcontext context;
+    result = cuCtxCreate(&context, 0, device);
+    if (result != CUDA_SUCCESS) {
+        std::cerr << "Failed to create context." << std::endl;
+        exit(EXIT_FAILURE);
+    }
+
+    // PTX
+    std::string ptxCode = read_ptx(filename);
+    // std::string ptxCode = rf(ptxFile);
+    
+    // std::cout << ptxCode;
+    // std::cout << std::endl;
+    const char* ptx = ptxCode.c_str();
+
+
+    // CUBIN
+    // unsigned char *cubinBuffer;
+    // size_t cubinBufferSize = read_cubin(filename, &cubinBuffer);
+    // if (cubinBufferSize == 0) {
+    //     return 1; // Error reading file
+    // }
+
+
+    // LOAD MODULE
+    // result = cuModuleLoadData(&mod, ptxFile);
+    result = cuModuleLoadData(&mod, ptx);
+    // result = cuModuleLoadData(&mod, cubinBuffer);
+    
+    if (result != CUDA_SUCCESS) {
+    std::cerr << "Failed to load PTX/Cubin module." << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    // GET KERNEL
+    result = cuModuleGetFunction(&fun, mod, kernel_name);
+    if (result != CUDA_SUCCESS) {
+        std::cerr << "Failed to get kernel function." << std::endl;
+        return EXIT_FAILURE;
+    }
+
+
+    // alloc
+    int *ha = (int *)malloc(sizeof(int)*1);
+    int *hb = (int *)malloc(sizeof(int)*1);
+    int *hc = (int *)malloc(sizeof(int)*1);
+    long long int  *clock = (long long int  *)malloc(sizeof(long long int )*1);
+    int *da;
+    int *db;
+    int *dc;
+    long long int  *dclock;
+    cudaMalloc((void**)&db, sizeof(int)*1);
+    cudaMalloc((void **)&da, sizeof(int)*1);
+    cudaMalloc((void**)&dc, sizeof(int)*1);
+    cudaMalloc((void**)&dclock, sizeof(long long int )*1);
+    *ha = 0;
+    *hb = 1;
+    *hc = 2;
+    cudaMemcpy(da, ha, sizeof(int)*1,cudaMemcpyHostToDevice);
+    cudaMemcpy(db, hb, sizeof(int)*1, cudaMemcpyHostToDevice);
+    cudaMemcpy(dc, hc, sizeof(int)*1, cudaMemcpyHostToDevice);
+
+    // launch
+    dim3 grid(1, 1, 1);
+    dim3 block(1, 1, 1);
+    void *args[] = {&da, &db, &dc, &dclock};
+
+    auto err = cuLaunchKernel(fun,
+                        grid.x, grid.y, grid.z,
+                        block.x, block.y, block.z, 
+                        0, // Shared memory
+                        0, // Stream
+                        args,
+                        0);
+    cudaDeviceSynchronize();
+    if (err != CUDA_SUCCESS) {
+        printf("Failed to launch kernel.\n");
+        return;
+    }
+
+    cudaMemcpy(hc, dc, sizeof(int)*1,cudaMemcpyDeviceToHost);
+    cudaMemcpy(clock, dclock, sizeof(long long int )*1,cudaMemcpyDeviceToHost);
+    if (*hc == 1) {
+        printf("OK\n");
+    } else {
+        printf("expect 1, got %d\n", *hc);
+    }
+
+    printf("clock: %llu\n", *clock);
+}
