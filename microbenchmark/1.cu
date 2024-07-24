@@ -44,9 +44,9 @@ int main(){
     cudaMalloc((void**)&dc, sizeof(int)*100);
     cudaMalloc((void**)&dclock, sizeof(long long int )*1);
     for (int i =0;i<100;++i) {
-        ha[i] = 0;
+        ha[i] = 1;
         hb[i] = 1;
-        hc[i] = 2;
+        hc[i] = 0;
     }
     cudaMemcpy(da, ha, sizeof(int)*100,cudaMemcpyHostToDevice);
     cudaMemcpy(db, hb, sizeof(int)*100, cudaMemcpyHostToDevice);
@@ -64,11 +64,11 @@ int main(){
 
     int cnt = 0 ;
     for (int i =0;i<100;++i) {
-        if (hc[i]==1)
+        printf("i: %d - hc: %d \t", i, hc[i]);
+        if (hc[i]==2)
             cnt++;
-        else
-            break;
     }
+    printf("\n");
 
     printf("got %d hc\n", cnt);
     printf("clock: %llu\n", *clock);

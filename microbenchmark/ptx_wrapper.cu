@@ -4,7 +4,7 @@
 
 #include <cuda.h>
 
-// compile: nvcc ptx_wrapper.cu  -lcuda -lcudart
+// compile: nvcc ptx_wrapper.cu  -lcuda -lcudart -o wrapper
 
 // Function to read the contents of a file into a string
 std::string read_ptx(const char* filename) {
@@ -52,7 +52,7 @@ size_t read_cubin(const char *filename, unsigned char **buffer) {
 
 int main() {
     const char* kernel_name = "_Z3addPiS_S_Px";
-    const char* filename = "1.cubin";
+    const char* filename = "cubin";
     CUresult result;
     CUfunction fun;
     CUmodule mod;
@@ -127,9 +127,9 @@ int main() {
     cudaMalloc((void**)&dc, sizeof(int)*100);
     cudaMalloc((void**)&dclock, sizeof(long long int )*1);
     for (int i =0;i<100;++i) {
-        ha[i] = 0;
+        ha[i] = 1;
         hb[i] = 1;
-        hc[i] = 2;
+        hc[i] = 0;
     }
     cudaMemcpy(da, ha, sizeof(int)*100,cudaMemcpyHostToDevice);
     cudaMemcpy(db, hb, sizeof(int)*100, cudaMemcpyHostToDevice);
@@ -158,11 +158,11 @@ int main() {
 
     int cnt = 0 ;
     for (int i =0;i<100;++i) {
-        if (hc[i]==1)
+        printf("i: %d - hc: %d \t", i, hc[i]);
+        if (hc[i]==2)
             cnt++;
-        else
-            break;
     }
+    printf("\n");
 
     printf("got %d hc\n", cnt);
     printf("clock: %llu\n", *clock);
