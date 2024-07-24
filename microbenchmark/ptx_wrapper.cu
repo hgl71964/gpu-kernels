@@ -114,24 +114,26 @@ int main() {
 
 
     // alloc
-    int *ha = (int *)malloc(sizeof(int)*1);
-    int *hb = (int *)malloc(sizeof(int)*1);
-    int *hc = (int *)malloc(sizeof(int)*1);
+    int *ha = (int *)malloc(sizeof(int)*100);
+    int *hb = (int *)malloc(sizeof(int)*100);
+    int *hc = (int *)malloc(sizeof(int)*100);
     long long int  *clock = (long long int  *)malloc(sizeof(long long int )*1);
     int *da;
     int *db;
     int *dc;
     long long int  *dclock;
-    cudaMalloc((void**)&db, sizeof(int)*1);
-    cudaMalloc((void **)&da, sizeof(int)*1);
-    cudaMalloc((void**)&dc, sizeof(int)*1);
+    cudaMalloc((void**)&db, sizeof(int)*100);
+    cudaMalloc((void **)&da, sizeof(int)*100);
+    cudaMalloc((void**)&dc, sizeof(int)*100);
     cudaMalloc((void**)&dclock, sizeof(long long int )*1);
-    *ha = 0;
-    *hb = 1;
-    *hc = 2;
-    cudaMemcpy(da, ha, sizeof(int)*1,cudaMemcpyHostToDevice);
-    cudaMemcpy(db, hb, sizeof(int)*1, cudaMemcpyHostToDevice);
-    cudaMemcpy(dc, hc, sizeof(int)*1, cudaMemcpyHostToDevice);
+    for (int i =0;i<100;++i) {
+        ha[i] = 0;
+        hb[i] = 1;
+        hc[i] = 2;
+    }
+    cudaMemcpy(da, ha, sizeof(int)*100,cudaMemcpyHostToDevice);
+    cudaMemcpy(db, hb, sizeof(int)*100, cudaMemcpyHostToDevice);
+    cudaMemcpy(dc, hc, sizeof(int)*100, cudaMemcpyHostToDevice);
 
     // launch
     dim3 grid(1, 1, 1);
@@ -151,13 +153,22 @@ int main() {
         return;
     }
 
-    cudaMemcpy(hc, dc, sizeof(int)*1,cudaMemcpyDeviceToHost);
+    cudaMemcpy(hc, dc, sizeof(int)*100,cudaMemcpyDeviceToHost);
     cudaMemcpy(clock, dclock, sizeof(long long int )*1,cudaMemcpyDeviceToHost);
-    if (*hc == 1) {
-        printf("OK\n");
-    } else {
-        printf("expect 1, got %d\n", *hc);
+
+    int cnt = 0 ;
+    for (int i =0;i<100;++i) {
+        if (hc[i]==1)
+            cnt++;
+        else
+            break;
     }
 
+    printf("got %d hc\n", cnt);
     printf("clock: %llu\n", *clock);
+
+    // ENSURE: there's only a sequence of the same instruction within clock64 block
+    float avg = static_cast<float>(*clock) / static_cast<float>(cnt);
+    printf("average: %f\n", avg);
+
 }
