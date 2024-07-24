@@ -52,7 +52,7 @@ size_t read_cubin(const char *filename, unsigned char **buffer) {
 
 int main() {
     const char* kernel_name = "_Z3addPiS_S_Px";
-    const char* filename = "1.ptx";
+    const char* filename = "1.cubin";
     CUresult result;
     CUfunction fun;
     CUmodule mod;
@@ -76,31 +76,34 @@ int main() {
     }
 
     // PTX
-    std::string ptxCode = read_ptx(filename);
+    // std::string ptxCode = read_ptx(filename);
     // std::string ptxCode = rf(ptxFile);
     
     // std::cout << ptxCode;
     // std::cout << std::endl;
-    const char* ptx = ptxCode.c_str();
+    // const char* ptx = ptxCode.c_str();
 
-
-    // CUBIN
-    // unsigned char *cubinBuffer;
-    // size_t cubinBufferSize = read_cubin(filename, &cubinBuffer);
-    // if (cubinBufferSize == 0) {
-    //     return 1; // Error reading file
+    // result = cuModuleLoadData(&mod, ptx);
+    
+    // if (result != CUDA_SUCCESS) {
+    // std::cerr << "Failed to load PTX/Cubin module." << std::endl;
+    //     return EXIT_FAILURE;
     // }
 
 
-    // LOAD MODULE
-    // result = cuModuleLoadData(&mod, ptxFile);
-    result = cuModuleLoadData(&mod, ptx);
-    // result = cuModuleLoadData(&mod, cubinBuffer);
-    
+    // CUBIN
+    unsigned char *cubinBuffer;
+    size_t cubinBufferSize = read_cubin(filename, &cubinBuffer);
+    if (cubinBufferSize == 0) {
+        std::cerr << "Failed to read CUBIN file." << std::endl;
+        return 1; // Error reading file
+    }
+    result = cuModuleLoadData(&mod, cubinBuffer);
     if (result != CUDA_SUCCESS) {
     std::cerr << "Failed to load PTX/Cubin module." << std::endl;
         return EXIT_FAILURE;
     }
+
 
     // GET KERNEL
     result = cuModuleGetFunction(&fun, mod, kernel_name);

@@ -2,7 +2,7 @@
 // 1.cu
 // to ptx: nvcc -ptx -arch 80 1.cu -o output.ptx
 // to run: nvcc -arch 80 1.cu 
-// to ptx -> sass: ptxas -v -o 1.cubin 1.ptx
+// to ptx -> sass: ptxas -v -o 1.cubin --gpu-name sm_89 1.ptx
 //
 
 #include <cuda.h>
