@@ -68,7 +68,7 @@ void curandErrCheck_(curandStatus_t stat, const char* file, int line)
 }
 
 #include <mma.h>
-using namespace nvcuda;
+//using namespace nvcuda;
 
 // Must be multiples of 16 for wmma code to work
 #define MATRIX_M 16384
@@ -97,7 +97,12 @@ __global__ void wmma_example(half* a, half* b, float* c, int M, int N, int K, fl
     int warpM = (blockIdx.x * blockDim.x + threadIdx.x) / warpSize;
     int warpN = (blockIdx.y * blockDim.y + threadIdx.y);
 
+    if ((blockIdx.x == 0 && blockIdx.y==0) && (threadIdx.x == 0 && threadIdx.y==0)) {
+        printf("[DEBUG] warpSize: %d\n", warpSize);
+    }
+
     // Declare the fragments
+    namespace wmma = nvcuda::wmma;  // alias namespace
     wmma::fragment<wmma::matrix_a, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> a_frag;
     wmma::fragment<wmma::matrix_b, WMMA_M, WMMA_N, WMMA_K, half, wmma::col_major> b_frag;
     wmma::fragment<wmma::accumulator, WMMA_M, WMMA_N, WMMA_K, float> acc_frag;
@@ -233,11 +238,12 @@ int main(int argc, char* argv[])
     printf("blockDim %d, %d\n", blockDim.x, blockDim.y);  // 128, 4
 
 
-    printf("Running with wmma...\n");
+    printf("Running with wmma...\n\n");
     cudaErrCheck(cudaEventRecord(startWMMA));
     wmma_example<<<gridDim, blockDim>>>(a_fp16, b_fp16, c_wmma, MATRIX_M, MATRIX_N, MATRIX_K, alpha, beta);
     cudaErrCheck(cudaEventRecord(stopWMMA));
     cudaErrCheck(cudaEventSynchronize(stopWMMA));
+    printf("\n");
 
     // Now using cuBLAS
     printf("Running with cuBLAS...\n");
