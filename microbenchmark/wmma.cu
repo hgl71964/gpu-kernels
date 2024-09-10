@@ -41,7 +41,7 @@ void cublasErrCheck_(cublasStatus_t stat, const char* file, int line)
 	if (!(condition)){ printf("Assertion %s failed!\n", #condition); asm("trap;"); }
 
 
-__global__ void kernel(half *a, half *b, float *c, int m, int n, int k) {
+__global__ void wmma_kernel(half *a, half *b, float *c, int m, int n, int k) {
     namespace wmma = nvcuda::wmma;  // alias namespace
 
    // Declare the fragments
@@ -141,7 +141,7 @@ int main(int argc, char *argv[]) {
         // std::cout << "block: " << block_m << "; " << block_n << std::endl;
         // std::cout << "arg: " << arg <<  std::endl;
 
-        kernel<<<grid, block>>>(da, db, dc, m, n, k);
+        wmma_kernel<<<grid, block>>>(da, db, dc, m, n, k);
         cudaErrCheck(cudaDeviceSynchronize());
 
         // test output
