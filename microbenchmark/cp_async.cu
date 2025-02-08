@@ -7,6 +7,8 @@
 #include <cuda.h>
 #include <cublas_v2.h>  // for reference
 
+// compile: nvcc -arch sm_80  cp_async.cu -lcublas
+
 #define cudaErrCheck(stat)                         \
     {                                              \
         cudaErrCheck_((stat), __FILE__, __LINE__); \

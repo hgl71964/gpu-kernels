@@ -9,6 +9,8 @@
 #include <cuda_fp16.h>  // half precision utility
 #include <cublas_v2.h>  // for reference
 
+// compile: nvcc -arch sm_80  wmma.cu -lcublas
+
 // compile -> ptx: nvcc -arch sm_80  -ptx wmma.cu -o wmma.ptx
 // (-arch is needed to specify as not all architecture can do mma?)
 //
