@@ -51,7 +51,9 @@ size_t read_cubin(const char *filename, unsigned char **buffer) {
 
 
 int main() {
-    const char* kernel_name = "_Z3addPiS_S_Px";
+    //const char* kernel_name = "_Z3addPiS_S_Px";
+    const char* kernel_name = "_Z3addPxS_S_S_";
+
     const char* filename = "cubin";
     CUresult result;
     CUfunction fun;
@@ -78,13 +80,13 @@ int main() {
     // PTX
     // std::string ptxCode = read_ptx(filename);
     // std::string ptxCode = rf(ptxFile);
-    
+
     // std::cout << ptxCode;
     // std::cout << std::endl;
     // const char* ptx = ptxCode.c_str();
 
     // result = cuModuleLoadData(&mod, ptx);
-    
+
     // if (result != CUDA_SUCCESS) {
     // std::cerr << "Failed to load PTX/Cubin module." << std::endl;
     //     return EXIT_FAILURE;
@@ -114,26 +116,27 @@ int main() {
 
 
     // alloc
-    int *ha = (int *)malloc(sizeof(int)*100);
-    int *hb = (int *)malloc(sizeof(int)*100);
-    int *hc = (int *)malloc(sizeof(int)*100);
+    using lint = long long int;
+    lint *ha = (lint *)malloc(sizeof(lint)*100);
+    lint *hb = (lint *)malloc(sizeof(lint)*100);
+    lint *hc = (lint *)malloc(sizeof(lint)*100);
     long long int  *clock = (long long int  *)malloc(sizeof(long long int )*1);
-    int *da;
-    int *db;
-    int *dc;
+    lint *da;
+    lint *db;
+    lint *dc;
     long long int  *dclock;
-    cudaMalloc((void**)&db, sizeof(int)*100);
-    cudaMalloc((void **)&da, sizeof(int)*100);
-    cudaMalloc((void**)&dc, sizeof(int)*100);
+    cudaMalloc((void**)&db, sizeof(lint)*100);
+    cudaMalloc((void **)&da, sizeof(lint)*100);
+    cudaMalloc((void**)&dc, sizeof(lint)*100);
     cudaMalloc((void**)&dclock, sizeof(long long int )*1);
     for (int i =0;i<100;++i) {
         ha[i] = 1;
         hb[i] = 1;
         hc[i] = 0;
     }
-    cudaMemcpy(da, ha, sizeof(int)*100,cudaMemcpyHostToDevice);
-    cudaMemcpy(db, hb, sizeof(int)*100, cudaMemcpyHostToDevice);
-    cudaMemcpy(dc, hc, sizeof(int)*100, cudaMemcpyHostToDevice);
+    cudaMemcpy(da, ha, sizeof(lint)*100,cudaMemcpyHostToDevice);
+    cudaMemcpy(db, hb, sizeof(lint)*100, cudaMemcpyHostToDevice);
+    cudaMemcpy(dc, hc, sizeof(lint)*100, cudaMemcpyHostToDevice);
 
     // launch
     dim3 grid(1, 1, 1);
@@ -142,7 +145,7 @@ int main() {
 
     auto err = cuLaunchKernel(fun,
                         grid.x, grid.y, grid.z,
-                        block.x, block.y, block.z, 
+                        block.x, block.y, block.z,
                         0, // Shared memory
                         0, // Stream
                         args,
@@ -153,12 +156,13 @@ int main() {
         return;
     }
 
-    cudaMemcpy(hc, dc, sizeof(int)*100,cudaMemcpyDeviceToHost);
+    cudaMemcpy(hc, dc, sizeof(lint)*100,cudaMemcpyDeviceToHost);
     cudaMemcpy(clock, dclock, sizeof(long long int )*1,cudaMemcpyDeviceToHost);
 
     int cnt = 0 ;
     for (int i =0;i<100;++i) {
-        printf("i: %d - hc: %d \t", i, hc[i]);
+        //printf("i: %d - hc: %d \t", i, hc[i]);
+        printf("i: %d - hc: %llu \t", i, hc[i]);
         if (hc[i]==2)
             cnt++;
     }
