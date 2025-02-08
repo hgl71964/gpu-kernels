@@ -1,8 +1,8 @@
 
 #include "cuda_runtime.h"
-#include "device_launch_parameters.h"
+// #include "device_launch_parameters.h"
 #include <iostream>
-#include <stdio.h>
+//#include <stdio.h>
 
 using namespace std;
 
