@@ -5,12 +5,14 @@ import numpy as np
 
 from roofline import hw_specs, algo_intensity
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-f',
-                        type=str,
-                        default=None,
-                        help='Path to the text file containing matrix dimensions (m,n,k)')
+    parser.add_argument(
+        '-f',
+        type=str,
+        default=None,
+        help='Path to the text file containing matrix dimensions (m,n,k)')
     parser.add_argument('--dtype',
                         type=str,
                         default='fp16',
@@ -24,26 +26,44 @@ def parse_args():
     #                     help='Generate and display the roofline plot')
     return parser.parse_args()
 
-def plot_roofline(problem_points, mem_bw, math_bw):
+
+def plot_roofline(problem_points, spec):
+    math_bw, mem_bw = spec['math-bw'], spec['global-bw']
+
     intensities = np.logspace(-2, 5, 1000)  # Range for x-axis
+
     # Calculate performance limited by memory bandwidth
-    memory_limited_performance = mem_bw * intensities
+    global_mem_bound = mem_bw * intensities
 
     plt.figure(figsize=(10, 6))
 
     # Plotting the memory bandwidth limited performance
-    plt.plot(intensities, memory_limited_performance, label="Memory Bandwidth Limited", color='blue')
+    plt.plot(intensities,
+             global_mem_bound,
+             label="global memory bound",
+             color='blue')
+
+    # plot l2 too, but the remaining still computed by global memory
+    if 'l2-bw' in spec:
+        l2_bound = intensities * spec['l2-bw']
+        plt.plot(intensities, l2_bound, label="L2 Limited", color='slateblue')
 
     # Plotting the peak computational performance
-    plt.axhline(y=math_bw, color='red', linestyle='--', label="Peak Computational Performance")
+    plt.axhline(y=math_bw,
+                color='red',
+                linestyle='--',
+                label="Peak Computational Performance")
 
     # Plotting the roofline
-    plt.plot(intensities, [min(memory_limited_performance[i], math_bw) for i in range(len(intensities))],
-             label="Roofline", color='green')
+    plt.plot(
+        intensities,
+        [min(global_mem_bound[i], math_bw) for i in range(len(intensities))],
+        label="Roofline",
+        color='green')
 
     # Plotting each problem point
     for i, (ai, m, n, k) in enumerate(problem_points):
-        perf = min(mem_bw*ai, math_bw)
+        perf = min(mem_bw * ai, math_bw)
         plt.plot(ai, perf, 'o', label=f'Problem {i+1}: {m}x{n}x{k}')
 
     # Setting the scale to logarithmic for both axes
@@ -65,6 +85,7 @@ def plot_roofline(problem_points, mem_bw, math_bw):
     # Display the plot
     plt.show()
 
+
 def read_matrix_sizes(file_path):
     assert file_path is not None
     matrix_sizes = []
@@ -83,7 +104,9 @@ def read_matrix_sizes(file_path):
                         m, n, k = map(int, values)
                         matrix_sizes.append((m, n, k))
                     else:
-                        print(f"Warning: Skipping line with insufficient values: {line}")
+                        print(
+                            f"Warning: Skipping line with insufficient values: {line}"
+                        )
                 except ValueError:
                     print(f"Warning: Could not parse line: {line}")
     except FileNotFoundError:
@@ -91,6 +114,7 @@ def read_matrix_sizes(file_path):
         exit(1)
 
     return matrix_sizes
+
 
 def main():
     args = parse_args()
@@ -119,16 +143,22 @@ def main():
     for i, (m, n, k) in enumerate(matrix_sizes):
         ai = algo_intensity(m, n, k, dtype)
         problem_points.append((ai, m, n, k))
-        print(f"Problem {i+1}: {m}x{n}x{k}, Arithmetic Intensity = {ai:.2f} FLOPs/byte")
+        print(
+            f"Problem {i+1}: {m}x{n}x{k}, Arithmetic Intensity = {ai:.2f} FLOPs/byte"
+        )
 
     # Get hardware specifications
-    math_bw, mem_bw = hw_specs(args.hw)
-    print(f"Hardware: {args.hw}, Compute: {math_bw} TFLOPs/s, Memory Bandwidth: {mem_bw} TB/s")
+    spec = hw_specs(args.hw)
+    math_bw, mem_bw = spec['math-bw'], spec['global-bw']
+    print(
+        f"Hardware: {args.hw}, Compute: {math_bw} TFLOPs/s, Memory Bandwidth: {mem_bw} TB/s"
+    )
 
     # Plot the roofline model if requested
     # if args.plot:
     #     plot_roofline(problem_points, mem_bw, math_bw)
-    plot_roofline(problem_points, mem_bw, math_bw)
+    plot_roofline(problem_points, spec)
+
 
 if __name__ == "__main__":
     main()

@@ -3,46 +3,60 @@ import argparse
 import matplotlib.pyplot as plt
 import numpy as np
 
+
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('-m',
-                        type=int,
-                        default=4096,
-                        )
-    parser.add_argument('-n',
-                        type=int,
-                        default=4096,
-                        )
-    parser.add_argument('-k',
-                        type=int,
-                        default=4096,
-                        )
-    parser.add_argument('--dtype',
-                        type=str,
-                        default='fp16',
-                        )
+    parser.add_argument(
+        '-m',
+        type=int,
+        default=4096,
+    )
+    parser.add_argument(
+        '-n',
+        type=int,
+        default=4096,
+    )
+    parser.add_argument(
+        '-k',
+        type=int,
+        default=4096,
+    )
+    parser.add_argument(
+        '--dtype',
+        type=str,
+        default='fp16',
+    )
 
-    parser.add_argument('--hw',
-                        type=str,
-                        default='h100',
-                        )
-    parser.add_argument('--plot',
-                        action='store_true',
-                        )
+    parser.add_argument(
+        '--hw',
+        type=str,
+        default='h100',
+    )
+    parser.add_argument(
+        '--plot',
+        action='store_true',
+    )
 
     return parser.parse_args()
 
+
 def algo_intensity(m, n, k, dtype):
-    return 2*m*n*k / (dtype * (m*n+m*k+n*k))
+    return 2 * m * n * k / (dtype * (m * n + m * k + n * k))
+
 
 def hw_specs(hw):
     specs = {
-            # TFLOPS, TB/s
-            'a100': (),
-            'h100': (1978.9, 3.35),
-            }
+        # TFLOPS, TB/s
+        #'a100': (),
+        'h100': {
+            'math-bw': 1978.9,
+            'global-bw': 3.35,
+            'l2-bw': 6.28,  # measured by dissect Hopper
+        }
+    }
     assert hw in specs, f'{hw} not in specs'
     return specs[hw]
+
 
 def plot_roofline(ai, mem_bw, math_bw):
     intensities = np.logspace(-2, 5, 1000)  # Change the range as needed
@@ -54,15 +68,26 @@ def plot_roofline(ai, mem_bw, math_bw):
     plt.figure(figsize=(10, 6))
 
     # Plotting the memory bandwidth limited performance
-    plt.plot(intensities, memory_limited_performance, label="Memory Bandwidth Limited", color='blue')
+    plt.plot(intensities,
+             memory_limited_performance,
+             label="Memory Bandwidth Limited",
+             color='blue')
 
     # Plotting the peak computational performance
-    plt.axhline(y=math_bw, color='red', linestyle='--', label="Peak Computational Performance")
+    plt.axhline(y=math_bw,
+                color='red',
+                linestyle='--',
+                label="Peak Computational Performance")
 
     # plt.plot(intensities, [min(memory_limited_performance[i], math_bw) for i in range(len(intensities))], linestyle=':', label="roofline", color='green')
-    plt.plot(intensities, [min(memory_limited_performance[i], math_bw) for i in range(len(intensities))], label="roofline", color='green')  # roofline
+    plt.plot(intensities, [
+        min(memory_limited_performance[i], math_bw)
+        for i in range(len(intensities))
+    ],
+             label="roofline",
+             color='green')  # roofline
 
-    plt.plot(ai, min(mem_bw*ai, math_bw),'ro', label='algorithm')
+    plt.plot(ai, min(mem_bw * ai, math_bw), 'ro', label='algorithm')
 
     # Setting the scale to logarithmic for both axes
     plt.xscale('log')
@@ -85,8 +110,6 @@ def plot_roofline(ai, mem_bw, math_bw):
     plt.show()
 
 
-
-
 def main():
     args = parse_args()
     m, n, k = args.m, args.n, args.k
@@ -99,12 +122,11 @@ def main():
         raise
 
     ai = algo_intensity(m, n, k, dtype)
-    math_bw, mem_bw = hw_specs(args.hw)
+    spec = hw_specs(args.hw)
+    math_bw, mem_bw = spec['math-bw'], spec['global-bw']
 
     if args.plot:
         plot_roofline(ai, mem_bw, math_bw)
-
-
 
 
 if "__main__" == __name__:
