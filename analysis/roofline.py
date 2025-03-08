@@ -33,7 +33,7 @@ def parse_args():
     return parser.parse_args()
 
 def algo_intensity(m, n, k, dtype):
-    return 2*m*n*k / dtype * (m*n+m*k+n*k)
+    return 2*m*n*k / (dtype * (m*n+m*k+n*k))
 
 def hw_specs(hw):
     specs = {
@@ -45,7 +45,7 @@ def hw_specs(hw):
     return specs[hw]
 
 def plot_roofline(ai, mem_bw, math_bw):
-    intensities = np.logspace(-2, 4, 1000)  # Change the range as needed
+    intensities = np.logspace(-2, 5, 1000)  # Change the range as needed
 
     # Calculate performance limited by memory bandwidth
     memory_limited_performance = mem_bw * intensities
@@ -59,15 +59,18 @@ def plot_roofline(ai, mem_bw, math_bw):
     # Plotting the peak computational performance
     plt.axhline(y=math_bw, color='red', linestyle='--', label="Peak Computational Performance")
 
-    plt.plot(intensities, [min(memory_limited_performance[i], math_bw) for i in range(len(intensities))], linestyle=':', label="roofline", color='green')  # the roofline should be
+    # plt.plot(intensities, [min(memory_limited_performance[i], math_bw) for i in range(len(intensities))], linestyle=':', label="roofline", color='green')
+    plt.plot(intensities, [min(memory_limited_performance[i], math_bw) for i in range(len(intensities))], label="roofline", color='green')  # roofline
+
+    plt.plot(ai, min(mem_bw*ai, math_bw),'ro', label='algorithm')
 
     # Setting the scale to logarithmic for both axes
     plt.xscale('log')
     plt.yscale('log')
 
     # Setting limits for the axes
-    plt.xlim(left=min(intensities), right=max(intensities))
-    plt.ylim(bottom=min(memory_limited_performance), top=math_bw * 2)
+    #plt.xlim(left=min(intensities), right=max(intensities))
+    #plt.ylim(bottom=min(memory_limited_performance), top=math_bw * 2)
 
     # Adding labels and title
     plt.xlabel("Intensity (FLOPs/byte)")
@@ -92,6 +95,8 @@ def main():
         dtype = 2
     elif args.dtype == 'fp8':
         dtype = 1
+    else:
+        raise
 
     ai = algo_intensity(m, n, k, dtype)
     math_bw, mem_bw = hw_specs(args.hw)

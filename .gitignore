@@ -7,3 +7,6 @@ a.out
 *.o
 *.a
 *.dylib
+
+
+__pycache__/
