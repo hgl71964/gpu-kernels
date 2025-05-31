@@ -12,6 +12,7 @@
             },
             "includePath": [
                 "${workspaceFolder}/examples/**",
+                "${workspaceFolder}/third_party/cutlass/include/**",
                 "/usr/local/cuda-12.1/include/**",
                 "/usr/local/cuda-12.2/include/**"
             ],

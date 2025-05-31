@@ -86,6 +86,7 @@ gemm_device(ProblemShape shape_MNK, CtaTiler cta_tiler,
   CUTE_STATIC_ASSERT_V(size<1>(ASmemLayout{}) == size<2>(cta_tiler));  // BLK_K
   CUTE_STATIC_ASSERT_V(size<1>(BSmemLayout{}) == size<2>(cta_tiler));  // BLK_K
 
+  // Congruent: For every integer in Shape, there is a corresponding integer in Stride
   CUTE_STATIC_ASSERT_V(congruent(select<0,2>(shape_MNK), dA));         // dA strides for shape MK
   CUTE_STATIC_ASSERT_V(congruent(select<1,2>(shape_MNK), dB));         // dB strides for shape NK
   CUTE_STATIC_ASSERT_V(congruent(select<0,1>(shape_MNK), dC));         // dC strides for shape MN
@@ -101,15 +102,45 @@ gemm_device(ProblemShape shape_MNK, CtaTiler cta_tiler,
 
   // Get the appropriate blocks for this thread block
   auto cta_coord = make_coord(blockIdx.x, blockIdx.y, _);              // (m,n,k)
-  Tensor gA = local_tile(mA, cta_tiler, cta_coord, Step<_1, X,_1>{});  // (BLK_M,BLK_K,k)
+
+  // (BLK_M,BLK_K,k)
+  Tensor gA = local_tile(mA, cta_tiler, cta_coord, Step<_1, X,_1>{});  
+  
+  // equal to: 1. apply cta_tiler, 2. apply cta_coord
+  // Tensor gA = local_tile(mA, select<0,2>(cta_tiler), select<0,2>(cta_coord));
+
   Tensor gB = local_tile(mB, cta_tiler, cta_coord, Step< X,_1,_1>{});  // (BLK_N,BLK_K,k)
   Tensor gC = local_tile(mC, cta_tiler, cta_coord, Step<_1,_1, X>{});  // (BLK_M,BLK_N)
+
+
+  if(thread0()) {
+    printf("mA: ");
+    cute::print(mA); printf("\n");
+    printf("local tile: ");
+    cute::print(gA); printf("\n");
+    printf("cta cord: ");
+    cute::print(cta_coord); printf("\n");
+
+    // local tile also equal to:
+    printf("\nlocal tile equal to:\n");
+    Tensor gA_mk = zipped_divide(mA, select<0,2>(cta_tiler));
+    Tensor gA_for_print = gA_mk(make_coord(_,_), select<0,2>(cta_coord));
+    printf("gA_mk: ");
+    cute::print(gA_mk); printf("\n");
+    printf("gA_for_print: ");
+    cute::print(gA_for_print); printf("\n");
+  }
 
   // Shared memory buffers
   __shared__ TA smemA[cosize_v<ASmemLayout>];
   __shared__ TB smemB[cosize_v<BSmemLayout>];
   Tensor sA = make_tensor(make_smem_ptr(smemA), sA_layout);            // (BLK_M,BLK_K)
   Tensor sB = make_tensor(make_smem_ptr(smemB), sB_layout);            // (BLK_N,BLK_K)
+
+  if(thread0()) {
+    printf("cosize_v sA: ");
+    cute::print(cosize_v<ASmemLayout>); printf("\n");
+  }
 
   //
   // Partition the copying of A and B tiles across the threads
@@ -328,6 +359,10 @@ gemm_tn(int m, int n, int k,
   auto bK = Int<  8>{};
   auto cta_tiler = make_shape(bM, bN, bK);                   // (BLK_M, BLK_N, BLK_K)
 
+  std::cout << "cta tiler: " << " " ;
+  cute::print(cta_tiler);
+  std::cout << std::endl;
+
   // Define the smem layouts (static)
   auto sA = make_layout(make_shape(bM,bK), LayoutRight{});   // (m,k) -> smem_idx; k-major
   auto sB = make_layout(make_shape(bN,bK), LayoutRight{});   // (n,k) -> smem_idx; k-major
@@ -338,9 +373,15 @@ gemm_tn(int m, int n, int k,
   auto tB = make_layout(make_shape(Int<32>{}, Int< 8>{}), LayoutRight{});  // (n,k) -> thr_idx; k-major
   auto tC = make_layout(make_shape(Int<16>{}, Int<16>{}));                 // (m,n) -> thr_idx; m-major
 
-  dim3 dimBlock(size(tC));
   dim3 dimGrid(size(ceil_div(M, bM)),
                size(ceil_div(N, bN)));
+  dim3 dimBlock(size(tC));
+
+  std::cout << "grid: " << dimGrid.x << " " << dimGrid.y << " " << dimGrid.z << std::endl;
+  std::cout << "block: " << dimBlock.x << " " << dimBlock.y << " " << dimBlock.z << std::endl;
+  std::cout << "[Launching]: " << std::endl;
+  std::cout << std::endl;
+
   gemm_device<<<dimGrid, dimBlock, 0, stream>>>
       (prob_shape, cta_tiler,
        A, dA, sA, tA,
@@ -384,11 +425,11 @@ int main(int argc, char** argv)
   if (argc >= 4)
     sscanf(argv[3], "%d", &k);
 
-  char transA = 'N';
+  char transA = 'T';
   if (argc >= 5)
     sscanf(argv[4], "%c", &transA);
 
-  char transB = 'T';
+  char transB = 'N';
   if (argc >= 6)
     sscanf(argv[5], "%c", &transB);
 
@@ -421,9 +462,6 @@ int main(int argc, char** argv)
 
   double gflops = (2.0*m*n*k) * 1e-9;
 
-  const int timing_iterations = 100;
-  GPU_Clock timer;
-
   int ldA = 0, ldB = 0, ldC = m;
 
   if (transA == 'N') {
@@ -452,19 +490,21 @@ int main(int argc, char** argv)
   CUTE_CHECK_LAST();
   thrust::host_vector<TC> cute_result = d_C;
 
-  // Timing iterations
-  timer.start();
-  for (int i = 0; i < timing_iterations; ++i) {
-    gemm(transA, transB, m, n, k,
-         alpha,
-         d_A.data().get(), ldA,
-         d_B.data().get(), ldB,
-         beta,
-         d_C.data().get(), ldC);
-  }
-  double cute_time = timer.seconds() / timing_iterations;
-  CUTE_CHECK_LAST();
-  printf("CUTE_GEMM:     [%6.1f]GFlop/s  (%6.4f)ms\n", gflops / cute_time, cute_time*1000);
-  return 0;
+  // // Timing iterations
+  // const int timing_iterations = 1;
+  // GPU_Clock timer;
+  // timer.start();
+  // for (int i = 0; i < timing_iterations; ++i) {
+  //   gemm(transA, transB, m, n, k,
+  //        alpha,
+  //        d_A.data().get(), ldA,
+  //        d_B.data().get(), ldB,
+  //        beta,
+  //        d_C.data().get(), ldC);
+  // }
+  // double cute_time = timer.seconds() / timing_iterations;
+  // CUTE_CHECK_LAST();
+  // printf("CUTE_GEMM:     [%6.1f]GFlop/s  (%6.4f)ms\n", gflops / cute_time, cute_time*1000);
+  // return 0;
 }
 
