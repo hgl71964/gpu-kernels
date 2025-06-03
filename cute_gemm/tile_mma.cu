@@ -67,6 +67,8 @@ int main(int argc, const char** argv)
     auto smem_tensor_B{cute::make_tensor(h_B.data(), smem_layout_B)};
     auto smem_tensor_C{cute::make_tensor(h_C.data(), smem_layout_C)};
 
+    std::cout << std::endl;
+    std::cout << "[Shared Memory]" << std::endl;
     std::cout << "smem_tensor_A" << std::endl;
     cute::print(smem_tensor_A);
     std::cout << std::endl;
@@ -75,6 +77,7 @@ int main(int argc, const char** argv)
     std::cout << std::endl;
     std::cout << "smem_tensor_C" << std::endl;
     cute::print(smem_tensor_C);
+    std::cout << std::endl;
     std::cout << std::endl;
 
     // 
@@ -117,7 +120,7 @@ int main(int argc, const char** argv)
                        MMA_LAYOUT_M * MMA_LAYOUT_N * MMA_LAYOUT_K *
                            cute::size(decltype(mma_atom)::ThrID{}));
 
-    std::cout << std::endl;
+    std::cout << "[MMA Atom and Tile]" << std::endl;
     std::cout << "mma_atom" << std::endl;
     cute::print(mma_atom);
     std::cout << std::endl;
@@ -182,6 +185,9 @@ int main(int argc, const char** argv)
         cute::shape(thread_layout_C_smem_tensor_A_no_tiled_copy) ==
         cute::shape(thread_layout_C_register_tensor_A));
 
+    // 
+    // partition_A vs partition_fragment_A: https://github.com/NVIDIA/cutlass/issues/1246
+    //
     std::cout << "thread_layout_C_register_tensor_A" << std::endl;
     cute::print(thread_layout_C_register_tensor_A);
     std::cout << std::endl;
@@ -200,6 +206,7 @@ int main(int argc, const char** argv)
     std::cout << std::endl;
     std::cout << "thread_layout_C_smem_tensor_C_no_tiled_copy" << std::endl;
     cute::print(thread_layout_C_smem_tensor_C_no_tiled_copy);
+    std::cout << std::endl;
     std::cout << std::endl;
 
     //
@@ -244,6 +251,7 @@ int main(int argc, const char** argv)
         cute::shape(thread_layout_C_smem_tensor_B_tiled_copy) ==
         cute::shape(thread_layout_C_register_tensor_B_copy_view));
 
+    std::cout << "[Tile Copy]" << std::endl;
     std::cout << "copy_atom_A" << std::endl;
     cute::print(copy_atom_A);
     std::cout << std::endl;
@@ -271,6 +279,12 @@ int main(int argc, const char** argv)
     std::cout << "thread_layout_C_register_tensor_B_copy_view" << std::endl;
     cute::print(thread_layout_C_register_tensor_B_copy_view);
     std::cout << std::endl;
+
+    //
+    // then can execute copy from share mem -> register's view
+    // e.g. cute::copy(smem_tiled_copy_A, thread_layout_C_smem_tensor_A_tiled_copy,
+    //                 thread_layout_C_register_tensor_A_copy_view )
+    //
 
     return 0;
 }
