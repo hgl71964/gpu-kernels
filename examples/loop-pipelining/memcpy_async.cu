@@ -117,6 +117,46 @@ __global__ void tile_mm_async(float *A, float *B, float *C, const int M, const i
 }
 
 
+template<int BM, int BN, int BK>
+__global__ void mm_async(float *A, float *B, float *C, const int M, const int N, const int K) {
+    extern __shared__ float S[];
+    float *SA = reinterpret_cast<float *>(S);  // [BM][BK]
+    float *SB = S + BM * BK;                   // [BK][BN]
+    auto TB = cooperative_groups::this_thread_block();
+
+    float accu = 0;
+    for (int k = 0; k < K; k += BK) {
+
+        //// async copy (this assume boundary OK)
+        for (int ti = 0; ti<BM; ++ti) {
+            if (BM * blockIdx.x + ti < M)
+                cooperative_groups::memcpy_async(TB, SA + ti*BK, A + (BM * blockIdx.x+ti)*K + k, BK * sizeof(float));
+            else
+                assert(0); // how to fill 0?
+        }
+        for (int ti = 0; ti<BK; ++ti) {
+            if (BN * blockIdx.y +BN-1 < N)
+                cooperative_groups::memcpy_async(TB, SB + ti*BN , B + (k + ti)*N + blockIdx.y*BN, BN * sizeof(float));
+            else
+                assert(0);
+        }
+        cooperative_groups::wait(TB); 
+
+        for (int kk = 0; kk < BK; ++kk) {
+            int row = threadIdx.x / BN;
+            int col = threadIdx.x % BN;
+            accu += SA[row*BK+kk] * SB[kk*BN+col];
+        }
+        __syncthreads();
+    }
+
+    int row = threadIdx.x / BN;
+    int col = threadIdx.x % BN;
+    if (row + blockIdx.x * BM < M && col + blockIdx.y * BN < N)
+        C[(row + blockIdx.x * BM)*N + col + blockIdx.y * BN] = accu;
+}
+
+
 int main() {
     srand(time(0));
 
