@@ -1,251 +1,363 @@
 #include <iostream>
-#include "cuda_runtime.h"
-#include <cmath>
+#include <cuda_runtime.h>
 
-#include <cstdlib>  // for rand
-#include <ctime> // for time()
-
-
-// compile: nvcc basic.cu
-
-#define BLOCK_DIM 8
-
-
-#define cudaAssert(condition) \
-	if (!(condition)){ printf("Assertion %s failed!\n", #condition); asm("trap;"); }
-
-
-int cdiv(int length, int block_size) {
-        return (length + block_size - 1)/block_size;
+#define cudaErrCheck(stat)                         \
+    {                                              \
+        cudaErrCheck_((stat), __FILE__, __LINE__); \
+    }
+void cudaErrCheck_(cudaError_t stat, const char* file, int line)
+{
+    if (stat != cudaSuccess) {
+        fprintf(stderr, "CUDA Error: %s %s %d\n", cudaGetErrorString(stat), file, line);
+    }
 }
 
-__global__ void native_mm(float* da, float* db, float* dc, int block_m, int block_n, int block_k, int M, int N, int K) {
-	int row = blockIdx.x * blockDim.x + threadIdx.x;
-	int col = blockIdx.y * blockDim.y + threadIdx.y;
+int cdiv(int len, int block_size) {
+        return (len + block_size -1)/block_size;
+}
 
-        if (row < M && col < N) {
-                float res = 0;
-                for (int k = 0; k < K; ++k) {
-                        float a = da[row*K + k];
-                        float b = db[k*N + col];
-                        res += a*b;
+
+template<int BM, int BN, int BK>
+__global__ void gemm(float *A, float *B, float *C, int M, int N, int K) {
+
+        int row = blockIdx.x * BM + threadIdx.x/BN;
+        int col = blockIdx.y * BN + threadIdx.x%BN;
+
+        // int row = blockIdx.x * BM + threadIdx.x%BM;
+        // int col = blockIdx.y * BN + threadIdx.x/BM;
+
+        float accu = 0;
+        if (row<M&&col<N) {
+                for (int k = 0; k < K ; ++k) {
+                        accu += A[row*K + k] * B[k*N + col];
                 }
-                dc[row*N + col] = res;
+                C[row*N + col] = accu;
         }
 }
 
-__global__ void tiled_mm(float* da, float* db, float* dc, int block_m, int block_n, int block_k, int M, int N, int K) {
-	int row = blockIdx.x * blockDim.x + threadIdx.x;
-	int col = blockIdx.y * blockDim.y + threadIdx.y;
+template<int BM, int BN, int BK>
+__global__ void gemm_tile(float *A, float *B, float *C, int M, int N, int K) {
+        __shared__ float SA[BM][BK];
+        __shared__ float SB[BK][BN];
 
-         // must match block_m, block_n, block_k
-	 __shared__ float tileA[BLOCK_DIM][BLOCK_DIM];
-	 __shared__ float tileB[BLOCK_DIM][BLOCK_DIM];
+        // NOTE: must be enough thr to load!!!
+        static_assert(blockDim.x >= BM * BK);
+        static_assert(blockDim.x >= BK * BN);
 
-         int tile_row = threadIdx.x;
-         int tile_col = threadIdx.y;
+        float accu = 0;
+        for (int k = 0; k < K; k+=BK) {
+                if (threadIdx.x < BM * BK) {
+                        int row = threadIdx.x / BK;
+                        int col = threadIdx.x % BK;
+                        if (row+blockIdx.x*BM < M && k+col < K)
+                                SA[row][col] = A[(blockIdx.x * BM + row)*K + k + col];
+                        else
+                                SA[row][col] = 0;
+                } 
+                if (threadIdx.x < BK * BN) {
+                        int row = threadIdx.x/BN; 
+                        int col = threadIdx.x%BN;
 
-         float res = 0; // thread local
-
-        for (int k = 0; k < K; k+=block_k) {
-                // fetch to shared memory
-                float a=0;
-                float b=0;
-
-                int x = row*K + (k + tile_col);
-                int y = (k + tile_row)*N + col;
-                if (x < M*K) {
-                        a = da[x];
+                        if (col + blockIdx.y*BN < N && k+row < K)
+                                SB[row][col] = B[(k+row)*N + col + blockIdx.y*BN];
+                        else
+                                SB[row][col] = 0;
                 }
-                if (y < N*K) {
-                        b = db[y];
-                }
-
-		tileA[tile_row][tile_col] = a;
-		tileB[tile_row][tile_col] = b;
-
                 __syncthreads();
 
-                // accum
-                for (int kk = 0; kk < block_k; ++kk) {
-                        float a = tileA[tile_row][kk];
-                        float b = tileB[kk][tile_col];
-                        res += a*b;
+                for (int kk = 0 ; kk < BK; ++kk) {
+                        int row = threadIdx.x/BN;
+                        int col = threadIdx.x%BN;
+                        accu += SA[row][kk] * SB[kk][col];
                 }
                 __syncthreads();
         }
 
-        if (row < M && col < N) {
-                dc[row*N + col] = res;
+        int row = blockIdx.x * BM + threadIdx.x/BN;
+        int col = blockIdx.y * BN + threadIdx.x%BN;
+        if (row<M&&col<N) {
+                C[row*N + col] = accu;
         }
 }
 
+template<int BM, int BN, int BK, int TM, int TN>
+__global__ void gemm_thread_blocking(float *A, float *B, float *C, int M, int N, int K) {
+        // here TM and TN means works per thread along M and N
+        __shared__ float SA[BM][BK];
+        __shared__ float SB[BK][BN];
 
-__global__ void tiled_mm_double_buffer(float* da, float* db, float* dc, int block_m, int block_n, int block_k, int M, int N, int K) {
-	int row = blockIdx.x * blockDim.x + threadIdx.x;
-	int col = blockIdx.y * blockDim.y + threadIdx.y;
+        float RA[TM] = {0};
+        float RB[TN] = {0};
+        float RC[TM][TN] = {0};
 
-	// Double buffering: two sets of tiles for A and B
-	__shared__ float tileA[2][BLOCK_DIM][BLOCK_DIM];
-	__shared__ float tileB[2][BLOCK_DIM][BLOCK_DIM];
+        // NOTE: must be enough thr to load!!!
+        static_assert(BM/TM * BN/TN >= (BM/TM) * BK);
+        static_assert(BM/TM * BN/TN >= BK * BN/TN);
 
-	int tile_row = threadIdx.x;
-	int tile_col = threadIdx.y;
+        for (int k = 0 ; k < K; k+=BK) {
+                if (threadIdx.x < (BM/TM) * BK) {
+                        for (int ti = 0 ; ti < TM; ++ti) {
+                                int row = threadIdx.x / BK + ti * BM/TM;
+                                int col = threadIdx.x % BK ;
+                                if (row + blockIdx.x * BM < M && k + col < K)
+                                        SA[row][col] = A[(blockIdx.x * BM + row)*K + k + col];
+                                else
+                                        SA[row][col] = 0;
+                        }
+                }
+                if (threadIdx.x < BK * (BN/TN)) {
+                        for (int tj = 0 ; tj < TN; ++tj) {
+                                int row = threadIdx.x / (BN/TN);
+                                int col = threadIdx.x % (BN/TN) + tj * BN/TN;
+                                if (k + row < K && col + blockIdx.y * BN < N)
+                                        SB[row][col] = B[(k+row)*N + col + blockIdx.y * BN];
+                                else
+                                        SB[row][col] = 0;
+                        }
+                }
+                __syncthreads();
 
-	float res = 0;
+                for (int kk = 0 ; kk < BK; ++kk) {
+                        int row = threadIdx.x / (BN/TN);
+                        int col = threadIdx.x % (BN/TN);
 
-	int n_iter = K / block_k; // Assuming K is divisible by block_k for simplicity
-	cudaAssert(n_iter%2==0);
-	for (int t = 0; t < n_iter; t++) {
-	    int k = t * block_k;
-	    int buff_idx = t % 2; // Current buffer index
-	    int next_buff_idx = (t + 1) % 2; // Next buffer index
+                        #pragma unroll
+                        for (int ti = 0 ; ti < TM; ++ti) {
+                                RA[ti] = SA[row + ti * BM/TM][kk];
+                        }
+                        #pragma unroll
+                        for (int tj = 0; tj < TN; ++tj) {
+                                RB[tj] = SB[kk][col+tj*BN/TN];
+                        }
 
-	    // Load current tile
-	    int x = row * K + (k + tile_col);
-	    int y = (k + tile_row) * N + col;
-	    if (x < M * K) {
-		tileA[buff_idx][tile_row][tile_col] = da[x];
-	    } else {
-		tileA[buff_idx][tile_row][tile_col] = 0;
-	    }
-	    if (y < N * K) {
-		tileB[buff_idx][tile_row][tile_col] = db[y];
-	    } else {
-		tileB[buff_idx][tile_row][tile_col] = 0;
-	    }
+                        #pragma unroll
+                        for (int ti = 0 ; ti < TM; ++ti) {
+                                #pragma unroll
+                                for (int tj = 0 ; tj < TN; ++tj) {
+                                        RC[ti][tj] += RA[ti] * RB[tj];
+                                }
+                        }
+                }
+                __syncthreads();
+        }
 
-	    // Load next tile in advance if within bounds
-	    if (t < n_iter - 1) {
-		x = row * K + ((t + 1) * block_k + tile_col);
-		y = ((t + 1) * block_k + tile_row) * N + col;
-		if (x < M * K) {
-		    tileA[next_buff_idx][tile_row][tile_col] = da[x];
-		} else {
-		    tileA[next_buff_idx][tile_row][tile_col] = 0;
-		}
-		if (y < N * K) {
-		    tileB[next_buff_idx][tile_row][tile_col] = db[y];
-		} else {
-		    tileB[next_buff_idx][tile_row][tile_col] = 0;
-		}
-	    }
-
-	    __syncthreads();
-
-	    // Compute using current tile
-	    for (int kk = 0; kk < block_k; ++kk) {
-		float a = tileA[buff_idx][tile_row][kk];
-		float b = tileB[buff_idx][kk][tile_col];
-		res += a * b;
-	    }
-
-	    __syncthreads();
-	}
-
-	if (row < M && col < N) {
-	    dc[row * N + col] = res;
-	}
+        int row = threadIdx.x / (BN/TN);
+        int col = threadIdx.x % (BN/TN);
+        for (int ti = 0 ; ti < TM; ++ti) {
+                for (int tj = 0 ; tj < TN; ++tj) {
+                        if (row + ti * BM/TM + blockIdx.x * BM < M && col + tj * BN/TN + blockIdx.y * BN < N)
+                                C[(blockIdx.x * BM + row + ti * BM/TM)*N + blockIdx.y * BN + col + tj * BN/TN] = RC[ti][tj];
+                }
+        }
 }
 
+template<int BM, int BN, int BK, int TM, int TN, int STAGE=2>
+__global__ void gemm_thread_blocking_double_buffer(float *A, float *B, float *C, int M, int N, int K) {
+        // here TM and TN means works per thread along M and N
+        __shared__ float SA[STAGE][BM][BK];
+        __shared__ float SB[STAGE][BK][BN];
 
+        float RA[TM] = {0};
+        float RB[TN] = {0};
+        float RC[TM][TN] = {0};
+        static_assert(STAGE == 2);
 
-int main(int argc, char *argv[]) {
-	int arg = 0;
-	if (argc > 1) {
-		arg = std::atoi(argv[1]);
-	}
+        // NOTE: must be enough thr to load!!!
+        static_assert(BM/TM * BN/TN >= (BM/TM) * BK);
+        static_assert(BM/TM * BN/TN >= BK * BN/TN);
 
-        srand(time(0));
+        // prologue
+        int k = 0;
+        int stage = 0;
+        {
+                if (threadIdx.x < (BM/TM) * BK) {
+                        for (int ti = 0 ; ti < TM; ++ti) {
+                                int row = threadIdx.x / BK + ti * BM/TM;
+                                int col = threadIdx.x % BK ;
+                                if (row + blockIdx.x * BM < M && k + col < K)
+                                        SA[stage][row][col] = A[(blockIdx.x * BM + row)*K + k + col];
+                                else
+                                        SA[stage][row][col] = 0;
+                        }
+                }
+                if (threadIdx.x < BK * (BN/TN)) {
+                        for (int tj = 0 ; tj < TN; ++tj) {
+                                int row = threadIdx.x / (BN/TN);
+                                int col = threadIdx.x % (BN/TN) + tj * BN/TN;
+                                if (k + row < K && col + blockIdx.y * BN < N)
+                                        SB[stage][row][col] = B[(k+row)*N + col + blockIdx.y * BN];
+                                else
+                                        SB[stage][row][col] = 0;
+                        }
+                }
+        }
+        k += BK;
+        stage++;
+        stage %= STAGE;
+        int comp_stage = stage-1;
 
-        int m = 1024;
-        int n = 512;
-        int k = 128;
+        for (; k < K; k+=BK) {
+                __syncthreads();
+                if (threadIdx.x < (BM/TM) * BK) {
+                        for (int ti = 0 ; ti < TM; ++ti) {
+                                int row = threadIdx.x / BK + ti * BM/TM;
+                                int col = threadIdx.x % BK ;
+                                if (row + blockIdx.x * BM < M && k + col < K)
+                                        SA[stage][row][col] = A[(blockIdx.x * BM + row)*K + k + col];
+                                else
+                                        SA[stage][row][col] = 0;
+                        }
+                }
+                if (threadIdx.x < BK * (BN/TN)) {
+                        for (int tj = 0 ; tj < TN; ++tj) {
+                                int row = threadIdx.x / (BN/TN);
+                                int col = threadIdx.x % (BN/TN) + tj * BN/TN;
+                                if (k + row < K && col + blockIdx.y * BN < N)
+                                        SB[stage][row][col] = B[(k+row)*N + col + blockIdx.y * BN];
+                                else
+                                        SB[stage][row][col] = 0;
+                        }
+                }
 
-        // allocate input/output buffer
-        float *ha = (float *)malloc(sizeof(float)*m*k);
-        float *hb = (float *)malloc(sizeof(float)*n*k);
-        float *hc = (float *)malloc(sizeof(float)*m*n);
-        float *ref_c = (float *)malloc(sizeof(float)*m*n);
+                for (int kk = 0 ; kk < BK; ++kk) {
+                        int row = threadIdx.x / (BN/TN);
+                        int col = threadIdx.x % (BN/TN);
+
+                        #pragma unroll
+                        for (int ti = 0 ; ti < TM; ++ti) {
+                                RA[ti] = SA[comp_stage][row + ti * BM/TM][kk];
+                        }
+                        #pragma unroll
+                        for (int tj = 0; tj < TN; ++tj) {
+                                RB[tj] = SB[comp_stage][kk][col+tj*BN/TN];
+                        }
+
+                        #pragma unroll
+                        for (int ti = 0 ; ti < TM; ++ti) {
+                                #pragma unroll
+                                for (int tj = 0 ; tj < TN; ++tj) {
+                                        RC[ti][tj] += RA[ti] * RB[tj];
+                                }
+                        }
+                }
+                stage++;
+                stage %= STAGE;
+                comp_stage++;
+                comp_stage %= STAGE;
+        }
+
+        // epilogue
+        {
+                __syncthreads();
+                for (int kk = 0 ; kk < BK; ++kk) {
+                        int row = threadIdx.x / (BN/TN);
+                        int col = threadIdx.x % (BN/TN);
+
+                        #pragma unroll
+                        for (int ti = 0 ; ti < TM; ++ti) {
+                                RA[ti] = SA[comp_stage][row + ti * BM/TM][kk];
+                        }
+                        #pragma unroll
+                        for (int tj = 0; tj < TN; ++tj) {
+                                RB[tj] = SB[comp_stage][kk][col+tj*BN/TN];
+                        }
+
+                        #pragma unroll
+                        for (int ti = 0 ; ti < TM; ++ti) {
+                                #pragma unroll
+                                for (int tj = 0 ; tj < TN; ++tj) {
+                                        RC[ti][tj] += RA[ti] * RB[tj];
+                                }
+                        }
+                }
+        }
+
+        int row = threadIdx.x / (BN/TN);
+        int col = threadIdx.x % (BN/TN);
+        for (int ti = 0 ; ti < TM; ++ti) {
+                for (int tj = 0 ; tj < TN; ++tj) {
+                        if (row + ti * BM/TM + blockIdx.x * BM < M && col + tj * BN/TN + blockIdx.y * BN < N)
+                                C[(blockIdx.x * BM + row + ti * BM/TM)*N + blockIdx.y * BN + col + tj * BN/TN] = RC[ti][tj];
+                }
+        }
+}
+
+int main() {
+        const int M = 512;
+        const int N = 256;
+        const int K = 128;
+
+        float *ha =  (float *) malloc(sizeof(float)*M*K);
+        float *hb =  (float *) malloc(sizeof(float)*N*K);
+        float *hc =  (float *) malloc(sizeof(float)*M*N);
+        float *gold =  (float *) malloc(sizeof(float)*M*N);
+
+        for (int i = 0; i < M*K; ++i){
+                ha[i] = 1;
+        }
+        for (int i = 0; i < N*K; ++i){
+                hb[i] = 2;
+        }
+        for (int i = 0; i < M; ++i) {
+                for (int j = 0; j < N; ++j) {
+                        float accu = 0;
+                        for (int k = 0; k < K; ++k) {
+                                // row major
+                                accu += ha[i * K + k] * hb[k*N + j];
+                        }
+                        gold[i*N + j] = accu;
+                        //gold[i*N + j] = 0;
+                }
+        }
 
         float *da;
         float *db;
         float *dc;
-        cudaMalloc((void**)&db, sizeof(float)*n*k);
-        cudaMalloc((void **)&da, sizeof(float)*m*k);
-        cudaMalloc((void**)&dc, sizeof(float)*m*n);
+        cudaMalloc((void**)&da, sizeof(float)*M*K);
+        cudaMalloc((void**)&db, sizeof(float)*N*K);
+        cudaMalloc((void**)&dc, sizeof(float)*M*N);
 
-        // init and transfer memory (assume row-major)
-	float min = 0.0f;
-	float max = 1.0f;
-        for (int i = 0; i < m; ++i) {
-                for (int j = 0; j < k; ++j) {
-                        ha[i*k + j] = min + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (max - min)));
+        cudaMemcpy(da, ha, sizeof(float)*M*K,cudaMemcpyHostToDevice);
+        cudaMemcpy(db, hb, sizeof(float)*N*K,cudaMemcpyHostToDevice);
+        cudaMemcpy(dc, hc, sizeof(float)*M*N,cudaMemcpyHostToDevice);
+
+        // const int BM = 32;
+        // const int BN = 16;
+        // const int BK = 16;
+
+        // dim3 grid(cdiv(M,BM), cdiv(N,BN), 1);
+        // dim3 block(BM * BN, 1);
+        // std::cout << "grid: " << grid.x << " " << grid.y << " " << grid.z << std::endl;
+        // std::cout << "block: " << block.x << " " << block.y << " " << block.z << std::endl;
+        // // gemm<BM,BN,BK><<<grid, block>>>(da, db, dc, M, N, K);
+        // gemm_tile<BM,BN,BK><<<grid, block>>>(da, db, dc, M, N, K);
+
+
+        const int TM = 2;  // this means each thread compute 2 along M dim
+        const int TN = 2;
+        const int BM = 64;
+        const int BN = 32;
+        const int BK = 16;
+
+        dim3 grid(cdiv(M,BM), cdiv(N,BN), 1);
+        dim3 block((BM/TM) * (BN/TN), 1);
+        std::cout << "grid: " << grid.x << " " << grid.y << " " << grid.z << std::endl;
+        std::cout << "block: " << block.x << " " << block.y << " " << block.z << std::endl;
+        // gemm_thread_blocking<BM, BN, BK, TM, TN><<<grid, block>>>(da, db, dc, M, N, K);
+        gemm_thread_blocking_double_buffer<BM, BN, BK, TM, TN><<<grid, block>>>(da, db, dc, M, N, K);
+
+
+
+        cudaMemcpy(hc, dc, sizeof(float)*M*N,cudaMemcpyDeviceToHost);
+        cudaErrCheck(cudaDeviceSynchronize());
+
+        int err = 0;
+        for (int i = 0; i < M; ++i) {
+                for (int j = 0; j < N; ++j) {
+                        if (fabs(gold[i*N + j] - hc[i*N + j]) > 1e-4 ) {
+                                err++;
+                        }
                 }
         }
-        for (int i = 0; i < k; ++i) {
-                for (int j = 0; j < n; ++j) {
-                        hb[i*n + j] = min + static_cast<float>(rand()) / (static_cast<float>(RAND_MAX / (max - min)));
-                }
-        }
-        for (int i = 0; i < m; ++i) {
-                for (int j = 0; j < n; ++j) {
-                        hc[i*n + j] = 0.0;
-                }
-        }
-        for (int i = 0; i < m; ++i) {
-                for (int j = 0; j < n; ++j) {
-                        float c = 0;
-			for (int kk = 0; kk < k; ++kk) {
-                                c += ha[i*k+kk] * hb[kk*n+j];
-			}
-	                ref_c[i*n + j] = c;
-                }
-        }
-        cudaMemcpy(da, ha, sizeof(float)*m*k,cudaMemcpyHostToDevice);
-        cudaMemcpy(db, hb, sizeof(float)*n*k, cudaMemcpyHostToDevice);
-        cudaMemcpy(dc, hc, sizeof(float)*n*m, cudaMemcpyHostToDevice);
-
-        // kernel param
-        int block_m = BLOCK_DIM;
-        int block_n = BLOCK_DIM;
-        int block_k = BLOCK_DIM;
-
-        int grid_x = cdiv(m, block_m);
-        int grid_y = cdiv(n, block_n);
-
-        dim3 grid(grid_x, grid_y, 1);
-        dim3 block(block_m, block_n, 1);
-
-        // launch
-        std::cout << "GEMM: " << m << "; " << n << "; " << k << std::endl;
-        std::cout << "grid: " << grid_x << "; " << grid_y << std::endl;
-        std::cout << "block: " << block_m << "; " << block_n << std::endl;
-        std::cout << "arg: " << arg <<  std::endl;
-
-        if (arg == 0)
-                native_mm<<<grid, block>>>(da, db, dc, block_m, block_n, block_k, m, n, k);
-        else if (arg == 1)
-                tiled_mm<<<grid, block>>>(da, db, dc, block_m, block_n, block_k, m, n, k);
-        else if (arg == 2)
-                tiled_mm_double_buffer<<<grid, block>>>(da, db, dc, block_m, block_n, block_k, m, n, k);
-        cudaDeviceSynchronize();
-
-        // test output
-        cudaMemcpy(hc, dc, sizeof(float)*n*m,cudaMemcpyDeviceToHost);
-        cudaDeviceSynchronize();
-
-        int err=0;
-        for (int i = 0; i < m; ++i) {
-                for (int j = 0; j < n; ++j) {
-			if (std::abs(hc[i*n+j] - ref_c[i*n+j]) > 1e-4) {
-			    std::cout << i << "." << j << ": " << hc[i*n+j] << " " << ref_c[i*n+j] << std::endl;
-                            err++;
-			}
-                        if (err > 10)
-                                break;
-                }
-                if (err > 10)
-                        break;
-        }
+        std::cout << "Err: " << err << std::endl;
 }
