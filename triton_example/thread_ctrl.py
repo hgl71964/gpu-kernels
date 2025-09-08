@@ -75,7 +75,7 @@ def tl3(output_ptr,  BLOCK_SIZE: tl.constexpr):
 
 
 def main():
-    length = 512
+    length = 256
     block_size = 32
     out = torch.empty((length, ), device=DEVICE, dtype=torch.int32)
     # k = tl_kernel[(2, )](out, block_size)
@@ -84,6 +84,11 @@ def main():
     k = tl3[(2, )](out, block_size, num_warps=1)
     # with open(f'tl3_warp1.ptx', 'w') as f:
     #     f.write(k.asm['ptx'])
+
+    # NOTE: this is unsafe, because we can have only 32 threads in a threadblock,
+    # but we set block size to 64, the compiler will map each thread to 2 data elements
+    # which can product incorrect results
+
     for i in range(length):
         print(i, out[i].item(), end=', ')
         if (i+1)%32 == 0:
