@@ -10,3 +10,4 @@ a.out
 
 
 __pycache__/
+*egg-info
