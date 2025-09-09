@@ -73,6 +73,34 @@ def tl3(output_ptr,  BLOCK_SIZE: tl.constexpr):
     off_ptr = output_ptr + block_start
     tl.store(off_ptr, tid)
 
+@triton.jit
+def tl4(output_ptr,  BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(axis=0)  
+    tid = get_flat_tid()
+    block_start = pid * BLOCK_SIZE + tid
+    off_ptr = output_ptr + block_start
+    # tid is scalar, so off_ptr is a scalar pointer
+    # compiler will control only 1 thread to do the store in the threadblock
+    tl.store(off_ptr, tid)
+
+@triton.jit
+def tl5(output_ptr,  BLOCK_SIZE: tl.constexpr):
+    pid = tl.program_id(axis=0)  
+    tid = get_flat_tid()
+    block_start = pid * BLOCK_SIZE + tid
+    off_ptr = output_ptr + block_start
+    # we can bypass the compiler by inline asm
+    tl.inline_asm_elementwise(
+        """
+        st.global.b32 [$1], { $2 };
+        """,
+        "=r,l,r",
+        [off_ptr, tid],
+        dtype=(tl.uint32),
+        is_pure=False,
+        pack=1,
+    )
+
 
 def main():
     length = 256
@@ -81,8 +109,10 @@ def main():
     # k = tl_kernel[(2, )](out, block_size)
     # k = tl2[(2, )](out, block_size)
     # k = tl3[(2, )](out, block_size)
-    k = tl3[(2, )](out, block_size, num_warps=1)
-    # with open(f'tl3_warp1.ptx', 'w') as f:
+    # k = tl3[(2, )](out, block_size, num_warps=1)
+    # k = tl4[(2, )](out, block_size, num_warps=1)
+    k = tl5[(2, )](out, block_size, num_warps=1)
+    # with open(f'tl3.ptx', 'w') as f:
     #     f.write(k.asm['ptx'])
 
     # NOTE: this is unsafe, because we can have only 32 threads in a threadblock,
